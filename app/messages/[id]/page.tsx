@@ -176,26 +176,51 @@ export default function ChatPage() {
         }
     }
 
+    // --- ГОЛОСОВЫЕ (ИСПРАВЛЕНО) ---
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
             const mediaRecorder = new MediaRecorder(stream)
             mediaRecorderRef.current = mediaRecorder
             audioChunksRef.current = []
-            mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data) }
+
+            // Собираем данные по кусочкам
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data)
+                }
+            }
+
+            // Самое важное: логика отправки срабатывает ТОЛЬКО после полной остановки
             mediaRecorder.onstop = async () => {
+                // Собираем все куски в один файл
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+
+                // Проверка: если файл пустой - не отправляем
+                if (audioBlob.size === 0) {
+                    console.error("Ошибка: Пустое аудио")
+                    return
+                }
+
                 const audioFile = new File([audioBlob], 'voice-message.webm', { type: 'audio/webm' })
                 await sendMessage(audioFile, 'audio')
+
+                // Выключаем микрофон (убираем красную точку в браузере)
                 stream.getTracks().forEach(track => track.stop())
             }
+
             mediaRecorder.start()
             setIsRecording(true)
-        } catch (err) { alert('Микрофон недоступен') }
+        } catch (err) {
+            console.error(err)
+            alert('Микрофон недоступен. Разрешите доступ в настройках браузера.')
+        }
     }
 
     const stopRecording = () => {
         if (mediaRecorderRef.current && isRecording) {
+            // Важно: Сначала останавливаем рекордер. 
+            // Это вызовет событие 'onstop', где и произойдет отправка.
             mediaRecorderRef.current.stop()
             setIsRecording(false)
         }
