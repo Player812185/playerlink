@@ -4,6 +4,8 @@ import { supabase } from '@/utils/supabase'
 import Link from 'next/link'
 import { ArrowLeft, Bell } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 export default function MessagesList() {
     const [conversations, setConversations] = useState<any[]>([])
     const [loading, setLoading] = useState(true)

@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { ArrowLeft, Settings, Heart, MessageCircle, Mail, UserCheck, UserPlus } from 'lucide-react'
 import { ExpandableContent } from '@/components/ExpandableContent'
 
+export const dynamic = 'force-dynamic'
+
 export default function UserProfile({ params }: { params: Promise<{ username: string }> }) {
     const { username } = use(params)
     const router = useRouter()

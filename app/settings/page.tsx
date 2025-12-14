@@ -4,6 +4,8 @@ import { supabase } from '@/utils/supabase'
 import Link from 'next/link'
 import { ArrowLeft, Camera, LogOut, User, AtSign, Loader2 } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 export default function Settings() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)

@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useRouter } from 'next/navigation'
 
+export const dynamic = 'force-dynamic'
+
 export default function CompleteProfile() {
     const router = useRouter()
     const [loading, setLoading] = useState(false)

@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { ExpandableContent } from '@/components/ExpandableContent'
 
+export const dynamic = 'force-dynamic'
+
 type Comment = {
   id: string
   content: string

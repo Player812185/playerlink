@@ -4,6 +4,8 @@ import { supabase } from '@/utils/supabase'
 import Link from 'next/link'
 import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Play, Pause } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 type Message = {
     id: string
     content: string
