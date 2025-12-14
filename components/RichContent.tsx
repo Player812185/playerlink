@@ -4,8 +4,9 @@ import remarkGfm from 'remark-gfm'
 import Link from 'next/link'
 
 export function RichContent({ content }: { content: string }) {
-    // 1. Обрабатываем упоминания (превращаем в markdown ссылку)
-    // Мы используем хитрый трюк: делаем ссылку вида /u/@username
+    // 1. Ищем @username (латиница, цифры, подчеркивание).
+    // Если ваши юзернеймы поддерживают кириллицу, используйте /@([\p{L}\p{N}_]+)/gu
+    // Но обычно юзернеймы технические (латиница).
     const processedContent = content.replace(
         /@([a-zA-Z0-9_]+)/g,
         '[@$1](/u/$1)'
@@ -17,10 +18,13 @@ export function RichContent({ content }: { content: string }) {
                 remarkPlugins={[remarkGfm]}
                 components={{
                     a: ({ node, href, children, ...props }) => {
-                        // Если ссылка начинается с /u/ (наша внутренняя)
+                        // Обработка внутренних ссылок на профиль
                         if (href?.startsWith('/u/')) {
                             return (
-                                <Link href={href} className="text-primary font-bold bg-primary/10 px-1 rounded hover:bg-primary/20 transition">
+                                <Link
+                                    href={href}
+                                    className="text-primary font-bold bg-primary/10 px-1 rounded hover:bg-primary/20 transition no-underline"
+                                >
                                     {children}
                                 </Link>
                             )
@@ -32,13 +36,10 @@ export function RichContent({ content }: { content: string }) {
                             </a>
                         )
                     },
-                    // Стилизация цитат
                     blockquote: ({ node, ...props }) => (
                         <blockquote className="border-l-4 border-primary pl-4 italic bg-muted/30 py-1 my-2 rounded-r" {...props} />
                     ),
-                    // Стилизация кода
                     code: ({ node, className, children, ...props }: any) => {
-                        const match = /language-(\w+)/.exec(className || '')
                         return (
                             <code className={`${className} bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-red-400`} {...props}>
                                 {children}

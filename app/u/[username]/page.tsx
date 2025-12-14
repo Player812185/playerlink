@@ -1,13 +1,11 @@
 'use client'
-import { useEffect, useState, use } from 'react' // use для params в Next 15
+import { useEffect, useState, use } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Settings, Heart, MessageCircle, Mail, UserCheck, UserPlus } from 'lucide-react'
 
-// В Next.js 15 params - это Promise
 export default function UserProfile({ params }: { params: Promise<{ username: string }> }) {
-    // Разворачиваем параметры через хук use (или await, если компонент серверный, но у нас client)
     const { username } = use(params)
     const router = useRouter()
 
@@ -31,54 +29,84 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
             const { data: { user } } = await supabase.auth.getUser()
             setCurrentUser(user)
 
-            // 1. Ищем профиль по USERNAME, а не по ID
-            // Используем decodeURIComponent, чтобы русские ники и спецсимволы работали
             const decodedUsername = decodeURIComponent(username)
+
+            // --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            // 1. Ищем строго по колонке username.
+            // .ilike игнорирует регистр (найдет User, даже если ищем user)
             const { data: profileData, error } = await supabase
                 .from('profiles')
                 .select('*')
-                .eq('username', decodedUsername)
+                .ilike('username', decodedUsername)
                 .single()
 
             if (error || !profileData) {
-                alert('Пользователь не найден')
-                router.push('/')
-                return
+                // Fallback: Если по нику не нашли, проверяем, вдруг это старая ссылка по ID (UUID)
+                // UUID имеет формат 8-4-4-4-12 символов
+                const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(decodedUsername)
+
+                if (isUUID) {
+                    const { data: byId } = await supabase
+                        .from('profiles')
+                        .select('*')
+                        .eq('id', decodedUsername)
+                        .single()
+
+                    if (byId) {
+                        setProfile(byId)
+                        // Если нашли по ID, лучше сразу перекинуть на красивый URL с ником
+                        if (byId.username) {
+                            router.replace(`/u/${byId.username}`)
+                        }
+                    } else {
+                        alert('Пользователь не найден')
+                        router.push('/')
+                        return
+                    }
+                } else {
+                    alert('Пользователь не найден')
+                    router.push('/')
+                    return
+                }
+            } else {
+                setProfile(profileData)
             }
 
-            setProfile(profileData)
+            // Важно: используем ID найденного профиля для дальнейших запросов
+            const targetId = profileData?.id || profile?.id
+            if (!targetId) return
 
-            // 2. Посты этого юзера (используем ID из найденного профиля)
+            // 2. Посты
             const { data: postsData } = await supabase
                 .from('posts')
                 .select('*, likes(count), comments(count)')
-                .eq('user_id', profileData.id)
+                .eq('user_id', targetId)
                 .order('created_at', { ascending: false })
-
             setPosts(postsData || [])
 
             // 3. Подписки/Подписчики
             const { count: followers } = await supabase
                 .from('followers')
                 .select('*', { count: 'exact', head: true })
-                .eq('following_id', profileData.id)
+                .eq('following_id', targetId)
             setFollowersCount(followers || 0)
 
             const { count: following } = await supabase
                 .from('followers')
                 .select('*', { count: 'exact', head: true })
-                .eq('follower_id', profileData.id)
+                .eq('follower_id', targetId)
             setFollowingCount(following || 0)
 
-            // 4. Подписан ли я?
-            if (user && user.id !== profileData.id) {
+            // 4. Статус подписки
+            if (user && user.id !== targetId) {
                 const { data } = await supabase
                     .from('followers')
                     .select('*')
-                    .match({ follower_id: user.id, following_id: profileData.id })
+                    .match({ follower_id: user.id, following_id: targetId })
                     .single()
                 setIsFollowing(!!data)
             }
+
         } finally {
             setLoading(false)
         }
@@ -117,8 +145,8 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                             className="w-24 h-24 rounded-3xl object-cover border-4 border-background shadow-xl mb-4"
                             onError={(e) => e.currentTarget.src = PLACEHOLDER_IMG}
                         />
-                        <h1 className="text-2xl font-bold mb-1">{profile.username}</h1>
-                        <p className="text-sm text-muted-foreground">{profile.full_name}</p>
+                        <h1 className="text-2xl font-bold mb-1">{profile.full_name || profile.username}</h1>
+                        <p className="text-sm text-muted-foreground">@{profile.username}</p>
 
                         <div className="flex gap-6 text-sm text-muted-foreground mb-6 mt-4">
                             <div className="text-center">
@@ -157,7 +185,7 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                                     </button>
 
                                     <Link
-                                        href={`/messages/${profile.id}`} // Чат остается по ID, так надежнее для БД, но можно переделать на username, если сильно надо
+                                        href={`/messages/${profile.id}`}
                                         className="flex items-center justify-center bg-muted hover:bg-muted/80 text-foreground px-4 py-2.5 rounded-xl border border-border transition hover:border-primary/50 hover:text-primary"
                                     >
                                         <Mail size={20} />
@@ -186,11 +214,6 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                         </div>
                     </div>
                 ))}
-                {posts.length === 0 && (
-                    <div className="text-center py-10 text-muted-foreground bg-card/50 rounded-3xl border border-dashed border-border">
-                        У пользователя пока нет постов
-                    </div>
-                )}
             </div>
         </div>
     )
