@@ -3,6 +3,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { NotificationListener } from "@/components/NotificationListener";
 import OneSignalInit from '@/components/OneSignalInit'
+import OnlinePresence from '@/components/OnlinePresence'
 
 export const metadata: Metadata = {
   title: "Playerlink",
@@ -27,6 +28,7 @@ export default function RootLayout({
         <Providers>
           <NotificationListener />
           <OneSignalInit />
+          <OnlinePresence />
           {children}
         </Providers>
       </body>
