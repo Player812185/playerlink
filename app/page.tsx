@@ -5,7 +5,7 @@ import { Bold, Italic, List, Code, Heart, MessageCircle, Send, Trash2, Paperclip
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
-import { RichContent } from '@/components/RichContent'
+import { ExpandableContent } from '@/components/ExpandableContent'
 
 type Comment = {
   id: string
@@ -342,10 +342,9 @@ export default function Home() {
               </div>
 
               {/* Контент с Markdown */}
-              <div className="mb-5 pl-1">
-                <RichContent content={post.content} />
+              <div className="mb-5 text-foreground leading-relaxed pl-1">
+                <ExpandableContent content={post.content} />
               </div>
-
               {/* Картинка поста */}
               {post.image_url && (
                 <div className="mb-5 rounded-2xl overflow-hidden border border-border bg-muted">

@@ -4,6 +4,7 @@ import { supabase } from '@/utils/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Settings, Heart, MessageCircle, Mail, UserCheck, UserPlus } from 'lucide-react'
+import { ExpandableContent } from '@/components/ExpandableContent'
 
 export default function UserProfile({ params }: { params: Promise<{ username: string }> }) {
     const { username } = use(params)
@@ -201,7 +202,9 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                 <h2 className="text-lg font-bold ml-1">Публикации</h2>
                 {posts.map(post => (
                     <div key={post.id} className="bg-card border border-border p-5 rounded-3xl">
-                        <p className="mb-4 text-foreground leading-relaxed whitespace-pre-wrap break-words">{post.content}</p>
+                        <div className="mb-4">
+                            <ExpandableContent content={post.content} />
+                        </div>
                         {post.image_url && (
                             <div className="mb-4 rounded-2xl overflow-hidden border border-border bg-muted">
                                 <img src={post.image_url} className="w-full h-auto object-cover" />
