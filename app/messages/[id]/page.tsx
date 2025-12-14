@@ -31,7 +31,6 @@ export default function ChatPage() {
 
     const channelRef = useRef<RealtimeChannel | null>(null)
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-    const audioRef = useRef<HTMLAudioElement | null>(null) // Реф для звука
 
     const [file, setFile] = useState<File | null>(null)
     const [filePreview, setFilePreview] = useState<string | null>(null)
@@ -43,14 +42,12 @@ export default function ChatPage() {
     const scrollRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
+    // Функция создания ID комнаты (гарантирует одинаковое название для обоих юзеров)
     const getRoomId = (userId1: string, userId2: string) => {
         return [userId1, userId2].sort().join('-')
     }
 
     useEffect(() => {
-        // Инициализация звука
-        audioRef.current = new Audio('/notify.mp3')
-
         const init = async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
@@ -65,9 +62,10 @@ export default function ChatPage() {
             fetchMessages(user.id)
             markMessagesAsRead(user.id)
 
+            // --- 1. КАНАЛ ЧАТА (Сообщения + Печатает) ---
             const roomId = getRoomId(user.id, partnerId as string)
+            console.log("Подключение к комнате чата:", roomId)
 
-            // 1. КАНАЛ ЧАТА (Сообщения + Печатает)
             channelRef.current = supabase.channel(`chat:${roomId}`, {
                 config: { broadcast: { self: false } }
             })
@@ -76,15 +74,11 @@ export default function ChatPage() {
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
                     if (payload.eventType === 'INSERT') {
                         const msg = payload.new as Message
-                        // Проверяем, относится ли сообщение к этому чату
-                        if ((msg.sender_id === partnerId && msg.receiver_id === user.id) || (msg.sender_id === user.id && msg.receiver_id === partnerId)) {
+                        if ((msg.sender_id === partnerId) || (msg.sender_id === user.id)) {
                             setMessages((prev) => [...prev, msg])
-
-                            // ЕСЛИ СООБЩЕНИЕ ОТ ПАРТНЕРА:
                             if (msg.sender_id === partnerId) {
                                 markMessagesAsRead(user.id)
-                                // ИГРАЕМ ЗВУК 🔔
-                                try { audioRef.current?.play() } catch (e) { }
+                                try { new Audio('/notify.mp3').play() } catch (e) { }
                             }
                         }
                     }
@@ -96,38 +90,46 @@ export default function ChatPage() {
                     }
                 })
                 .on('broadcast', { event: 'typing' }, (payload) => {
+                    console.log("Получен сигнал typing от:", payload.payload.user_id)
                     if (payload.payload.user_id === partnerId) {
                         setIsTyping(true)
                         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
                         typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000)
                     }
                 })
-                .subscribe()
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') console.log("Чат подключен успешно")
+                })
 
-            // 2. КАНАЛ ПРИСУТСТВИЯ (Слушаем 'global-presence')
-            const presenceChannel = supabase.channel('global-presence')
-            presenceChannel
+            // --- 2. КАНАЛ ОНЛАЙНА (Слушаем глобальный канал) ---
+            // ВНИМАНИЕ: Имя должно совпадать с OnlinePresence.tsx
+            const globalPresence = supabase.channel('playerlink-presence')
+
+            globalPresence
                 .on('presence', { event: 'sync' }, () => {
-                    const state = presenceChannel.presenceState()
-                    // Ищем партнера
-                    const isOnline = Object.values(state).flat().some((u: any) => u.user_id === partnerId)
-                    setIsPartnerOnline(isOnline)
+                    const state = globalPresence.presenceState()
+                    // Проверяем, есть ли партнер в списке
+                    let found = false
+                    for (const key in state) {
+                        const users = state[key] as any[]
+                        if (users.find(u => u.user_id === partnerId)) {
+                            found = true
+                            break
+                        }
+                    }
+                    console.log("Статус партнера:", found ? "Онлайн" : "Оффлайн")
+                    setIsPartnerOnline(found)
                 })
                 .subscribe()
 
             return () => {
                 if (channelRef.current) supabase.removeChannel(channelRef.current)
-                supabase.removeChannel(presenceChannel)
+                supabase.removeChannel(globalPresence)
             }
         }
 
         init()
     }, [partnerId])
-
-    // ... (весь остальной код: fetchMessages, sendMessage, handleTyping и т.д. ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ)
-    // ... Копируй остальные функции из предыдущего моего ответа, они там правильные.
-
-    // ВАЖНО: Ниже я дублирую ключевые функции для контекста, но логику отправки мы не меняли.
 
     useEffect(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -268,7 +270,7 @@ export default function ChatPage() {
                 ) : <span>Загрузка...</span>}
             </div>
 
-            {/* ОСТАЛЬНОЙ РЕНДЕР (СООБЩЕНИЯ И ВВОД) ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ ИЗ ПРОШЛОГО ОТВЕТА */}
+            {/* ОСТАЛЬНОЙ РЕНДЕР ОСТАЕТСЯ ПРЕЖНИМ */}
             <div className="flex-grow overflow-y-auto p-4 space-y-1 bg-background" ref={scrollRef}>
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
