@@ -77,29 +77,58 @@ export default function Settings() {
         }
     }
 
+    const checkAnimatedWebP = (file: File): Promise<boolean> => {
+        return new Promise((resolve) => {
+            const reader = new FileReader()
+            reader.readAsArrayBuffer(file)
+            reader.onload = () => {
+                const buffer = reader.result as ArrayBuffer
+                const uint8 = new Uint8Array(buffer)
+                // Ищем заголовок 'ANIM' (hex: 41 4E 49 4D)
+                const len = uint8.length
+                for (let i = 0; i < len - 4; i++) {
+                    if (uint8[i] === 0x41 && uint8[i + 1] === 0x4E && uint8[i + 2] === 0x49 && uint8[i + 3] === 0x4D) {
+                        resolve(true)
+                        return
+                    }
+                }
+                resolve(false)
+            }
+            reader.onerror = () => resolve(false)
+        })
+    }
+
     const uploadAvatar = async (event: any) => {
         try {
             const file = event.target.files[0]
             if (!file) return
 
-            // --- НОВАЯ ПРОВЕРКА ---
+            // 1. Проверка на GIF
             if (file.type === 'image/gif') {
-                alert('GIF аватарки запрещены! Используйте JPG или PNG.')
+                alert('GIF на аватарке запрещены.')
                 return
             }
-            // ----------------------
 
+            // 2. Проверка на анимированный WebP
+            if (file.type === 'image/webp') {
+                const isAnimated = await checkAnimatedWebP(file)
+                if (isAnimated) {
+                    alert('Анимированные аватарки запрещены!')
+                    return
+                }
+            }
+
+            // Дальше стандартная загрузка...
             const fileExt = file.name.split('.').pop()
             const filePath = `${userId}-${Date.now()}.${fileExt}`
 
             const { error } = await supabase.storage.from('avatars').upload(filePath, file)
-
             if (error) throw error
 
             const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
             setAvatarUrl(data.publicUrl)
         } catch (error) {
-            alert('Ошибка загрузки. Возможно, формат файла не поддерживается.')
+            alert('Ошибка загрузки')
         }
     }
 

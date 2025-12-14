@@ -25,8 +25,10 @@ export default function ChatPage() {
     const [partnerProfile, setPartnerProfile] = useState<any>(null)
     const [myProfile, setMyProfile] = useState<any>(null)
 
-    // Статус онлайн
+    // Статусы
     const [isPartnerOnline, setIsPartnerOnline] = useState(false)
+    const [isTyping, setIsTyping] = useState(false)
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
     // Файлы
     const [file, setFile] = useState<File | null>(null)
@@ -47,31 +49,21 @@ export default function ChatPage() {
             if (!user) return
             setCurrentUser(user)
 
-            // Загружаем мой профиль
             const { data: myProf } = await supabase.from('profiles').select('*').eq('id', user.id).single()
             setMyProfile(myProf)
 
-            // Загружаем профиль партнера
+            // Загружаем профиль партнера (включая last_seen)
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', partnerId).single()
             setPartnerProfile(profile)
 
             fetchMessages(user.id)
             markMessagesAsRead(user.id)
 
-            // --- 1. СЛЕЖКА ЗА СТАТУСОМ ОНЛАЙН ---
-            const presenceChannel = supabase.channel('online-users')
-            presenceChannel
-                .on('presence', { event: 'sync' }, () => {
-                    const state = presenceChannel.presenceState()
-                    // Проверяем, есть ли ID партнера в списке активных юзеров
-                    const isOnline = Object.values(state).flat().some((u: any) => u.user_id === partnerId)
-                    setIsPartnerOnline(isOnline)
-                })
-                .subscribe()
+            // --- КАНАЛ СВЯЗИ ---
+            const channel = supabase.channel(`room:${partnerId}`)
 
-            // --- 2. СЛЕЖКА ЗА СООБЩЕНИЯМИ (REALTIME) ---
-            const chatChannel = supabase
-                .channel(`room:${partnerId}`)
+            channel
+                // 1. Слушаем сообщения (INSERT/DELETE/UPDATE)
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
                     if (payload.eventType === 'INSERT') {
                         const msg = payload.new as Message
@@ -87,11 +79,37 @@ export default function ChatPage() {
                         setMessages((prev) => prev.map(m => m.id === payload.new.id ? payload.new as Message : m))
                     }
                 })
+                // 2. Слушаем "Печатает..." (Broadcast)
+                .on('broadcast', { event: 'typing' }, (payload) => {
+                    // Если печатает партнер (а не я сам в другой вкладке)
+                    if (payload.payload.user_id === partnerId) {
+                        setIsTyping(true)
+                        // Сбрасываем таймер, если пришел новый сигнал
+                        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+                        // Убираем надпись через 3 секунды тишины
+                        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000)
+                    }
+                })
+                // 3. Слушаем статус Онлайн (Presence)
+                .on('presence', { event: 'sync' }, () => {
+                    const state = channel.presenceState()
+                    // Проверяем, есть ли партнер в этой комнате ИЛИ в глобальной комнате (нужно два канала, но пока упростим)
+                    // Для точного онлайна лучше использовать отдельный глобальный канал, как мы делали раньше.
+                    // Но чтобы не плодить каналы, давай проверим глобальный канал отдельно.
+                })
                 .subscribe()
 
+            // Отдельный канал для глобального онлайна (так надежнее)
+            const globalPresence = supabase.channel('online-users')
+            globalPresence.on('presence', { event: 'sync' }, () => {
+                const state = globalPresence.presenceState()
+                const isOnline = Object.values(state).flat().some((u: any) => u.user_id === partnerId)
+                setIsPartnerOnline(isOnline)
+            }).subscribe()
+
             return () => {
-                supabase.removeChannel(chatChannel)
-                supabase.removeChannel(presenceChannel)
+                supabase.removeChannel(channel)
+                supabase.removeChannel(globalPresence)
             }
         }
 
@@ -99,10 +117,8 @@ export default function ChatPage() {
     }, [partnerId])
 
     useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-        }
-    }, [messages, replyTo, filePreview, isRecording])
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }, [messages, replyTo, filePreview, isRecording, isTyping])
 
     const fetchMessages = async (myId: string) => {
         const { data } = await supabase
@@ -117,8 +133,28 @@ export default function ChatPage() {
         await supabase.from('messages').update({ is_read: true }).eq('sender_id', partnerId).eq('receiver_id', myId).eq('is_read', false)
     }
 
-    // --- ФАЙЛЫ И ВСТАВКА (PASTE) ---
+    // --- ОТПРАВКА СИГНАЛА "ПЕЧАТАЕТ" ---
+    const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setNewMessage(e.target.value)
+
+        if (currentUser) {
+            const channel = supabase.channel(`room:${partnerId}`)
+            channel.send({
+                type: 'broadcast',
+                event: 'typing',
+                payload: { user_id: currentUser.id }
+            })
+        }
+    }
+
+    // --- ФАЙЛЫ ---
     const processFile = (f: File) => {
+        // Проверка: Запрещаем video (включая video/webm, если это не голосовое), но разрешаем image/webp
+        if (f.type.startsWith('video/')) {
+            alert('Видео запрещены. Используйте фото или документы.')
+            return
+        }
+
         setFile(f)
         if (f.type.startsWith('image/')) {
             setFilePreview(URL.createObjectURL(f))
@@ -131,10 +167,9 @@ export default function ChatPage() {
         if (e.target.files && e.target.files[0]) processFile(e.target.files[0])
     }
 
-    // Обработчик Ctrl+V
     const handlePaste = (e: React.ClipboardEvent) => {
         if (e.clipboardData.files.length > 0) {
-            e.preventDefault() // Чтобы не вставлялось имя файла текстом
+            e.preventDefault()
             processFile(e.clipboardData.files[0])
         }
     }
@@ -227,10 +262,19 @@ export default function ChatPage() {
         await supabase.from('messages').delete().eq('id', msg.id)
     }
 
+    // Форматирование времени "был в сети"
+    const getLastSeenText = () => {
+        if (isPartnerOnline) return 'В сети'
+        if (isTyping) return 'Печатает...'
+        if (!partnerProfile?.last_seen) return 'Оффлайн'
+
+        const date = new Date(partnerProfile.last_seen)
+        return `Был(а) в сети ${date.toLocaleDateString()} в ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    }
+
     return (
         <div className="flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border">
 
-            {/* Шапка с индикатором */}
             <div className="flex items-center gap-4 p-4 border-b border-border bg-card shadow-sm z-10">
                 <Link href="/messages" className="text-muted-foreground hover:text-foreground">
                     <ArrowLeft />
@@ -239,22 +283,20 @@ export default function ChatPage() {
                     <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition">
                         <div className="relative">
                             <img src={partnerProfile.avatar_url || '/placeholder.png'} className="w-10 h-10 rounded-full object-cover" />
-                            {/* ЗЕЛЕНЫЙ КРУЖОК ОНЛАЙН */}
                             {isPartnerOnline && (
-                                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full animate-pulse"></span>
+                                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full"></span>
                             )}
                         </div>
                         <div className="flex flex-col">
                             <span className="font-bold leading-none">{partnerProfile.username}</span>
-                            <span className={`text-xs mt-1 ${isPartnerOnline ? 'text-green-500 font-medium' : 'text-muted-foreground'}`}>
-                                {isPartnerOnline ? 'В сети' : 'Оффлайн'}
+                            <span className={`text-xs mt-1 ${isPartnerOnline || isTyping ? 'text-green-500 font-medium' : 'text-muted-foreground'}`}>
+                                {isTyping ? 'Печатает...' : getLastSeenText()}
                             </span>
                         </div>
                     </Link>
                 ) : <span>Загрузка...</span>}
             </div>
 
-            {/* Сообщения */}
             <div className="flex-grow overflow-y-auto p-4 space-y-1 bg-background" ref={scrollRef}>
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
@@ -303,7 +345,6 @@ export default function ChatPage() {
                 })}
             </div>
 
-            {/* Ввод */}
             <div className="p-3 bg-card border-t border-border">
                 {replyTo && (
                     <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]">
@@ -339,8 +380,8 @@ export default function ChatPage() {
                     ) : (
                         <textarea
                             value={newMessage}
-                            onChange={(e) => setNewMessage(e.target.value)}
-                            onPaste={handlePaste} // <--- ВОТ ЗДЕСЬ ОБРАБОТЧИК PASTE
+                            onChange={handleTyping} // <--- ОТПРАВЛЯЕМ СИГНАЛ "ПЕЧАТАЕТ"
+                            onPaste={handlePaste}
                             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                             placeholder="Сообщение..."
                             className="flex-grow bg-muted text-foreground p-3 rounded-xl focus:outline-none focus:border-primary border border-transparent transition placeholder-muted-foreground resize-none min-h-[50px] max-h-[120px]"
