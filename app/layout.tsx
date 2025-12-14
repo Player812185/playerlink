@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
-import { NotificationListener } from "@/components/NotificationListener"; // <--- ИМПОРТ
+import { NotificationListener } from "@/components/NotificationListener";
+import OneSignalInit from '@/components/OneSignalInit'
 
 export const metadata: Metadata = {
   title: "Playerlink",
@@ -24,7 +25,8 @@ export default function RootLayout({
     <html lang="ru" suppressHydrationWarning>
       <body>
         <Providers>
-          <NotificationListener /> {/* <--- ВСТАВИТЬ СЮДА */}
+          <NotificationListener />
+          <OneSignalInit />
           {children}
         </Providers>
       </body>

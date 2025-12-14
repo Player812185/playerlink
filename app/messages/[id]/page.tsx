@@ -209,6 +209,22 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
             reply_to_id: replyTo?.id || null
         })
 
+        const { error } = await supabase.from('messages').insert({ ... })
+
+        if (!error) {
+            // --- ДОБАВЛЯЕМ ЭТОТ БЛОК ---
+            // Не ждем ответа (await), чтобы интерфейс не тормозил
+            fetch('/api/send-push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    receiverId: partnerId, // ID собеседника
+                    message: newMessage || (file ? 'Отправил файл' : 'Сообщение'),
+                    senderName: currentUser.user_metadata?.full_name || currentUser.email // Или username из профиля
+                })
+            })
+        }
+
         clearComposer()
     }
 
