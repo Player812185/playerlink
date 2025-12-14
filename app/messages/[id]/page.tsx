@@ -173,54 +173,40 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     }
 
     // --- ОТПРАВКА ---
-    const sendMessage = async (overrideFile?: File, overrideType?: string) => {
-        const fileToSend = overrideFile || file
-
-        if ((!newMessage.trim() && !fileToSend) || !currentUser) return
+    const sendMessage = async () => {
+        if ((!newMessage.trim() && !file) || !currentUser) return
 
         let uploadedUrl = null
-        let fileType = null
-        let fileName = null
 
-        if (fileToSend) {
-            const fileExt = fileToSend.name.split('.').pop()
-            const uniqueId = Math.random().toString(36).substring(7)
-            const filePath = `${currentUser.id}-${Date.now()}-${uniqueId}.${fileExt}`
-
-            const { error } = await supabase.storage.from('chat-attachments').upload(filePath, fileToSend)
+        // 1. Загрузка файла (если есть)
+        if (file) {
+            const fileExt = file.name.split('.').pop()
+            const fileName = `${currentUser.id}-${Date.now()}.${fileExt}`
+            const { error } = await supabase.storage.from('chat-attachments').upload(fileName, file)
             if (!error) {
-                const { data } = supabase.storage.from('chat-attachments').getPublicUrl(filePath)
+                const { data } = supabase.storage.from('chat-attachments').getPublicUrl(fileName)
                 uploadedUrl = data.publicUrl
-                fileName = fileToSend.name
-
-                if (overrideType === 'audio') fileType = 'audio'
-                else if (fileToSend.type.startsWith('image/')) fileType = 'image'
-                else fileType = 'file'
             }
         }
 
-        await supabase.from('messages').insert({
+        // 2. Отправка сообщения в базу данных
+        const { error } = await supabase.from('messages').insert({
             sender_id: currentUser.id,
             receiver_id: partnerId,
             content: newMessage,
             file_url: uploadedUrl,
-            file_type: fileType, // Нужно добавить эту колонку в БД, либо определять по расширению
-            file_name: fileName, // Нужно добавить эту колонку в БД
             reply_to_id: replyTo?.id || null
         })
 
-        const { error } = await supabase.from('messages').insert({ ... })
-
+        // 3. Если ошибок нет — отправляем Push-уведомление
         if (!error) {
-            // --- ДОБАВЛЯЕМ ЭТОТ БЛОК ---
-            // Не ждем ответа (await), чтобы интерфейс не тормозил
             fetch('/api/send-push', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    receiverId: partnerId, // ID собеседника
+                    receiverId: partnerId,
                     message: newMessage || (file ? 'Отправил файл' : 'Сообщение'),
-                    senderName: currentUser.user_metadata?.full_name || currentUser.email // Или username из профиля
+                    senderName: currentUser.user_metadata?.full_name || currentUser.email || 'Пользователь'
                 })
             })
         }
