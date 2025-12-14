@@ -38,14 +38,26 @@ export default function Settings() {
 
     const uploadAvatar = async (event: any) => {
         try {
+            if (!event.target.files || event.target.files.length === 0) return
+
             const file = event.target.files[0]
             const fileExt = file.name.split('.').pop()
-            const filePath = `${userId}-${Date.now()}.${fileExt}`
-            const { error } = await supabase.storage.from('avatars').upload(filePath, file)
-            if (error) throw error
+            // Генерируем чистое имя файла (только латиница и цифры), чтобы избежать проблем с кодировкой
+            const randomString = Math.random().toString(36).substring(7)
+            const filePath = `${userId}-${Date.now()}-${randomString}.${fileExt}`
+
+            const { error: uploadError } = await supabase.storage
+                .from('avatars')
+                .upload(filePath, file, { upsert: true }) // <--- ВАЖНО: upsert: true
+
+            if (uploadError) throw uploadError
+
             const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
             setAvatarUrl(data.publicUrl)
-        } catch (error) { alert('Ошибка загрузки') }
+        } catch (error: any) { // Добавьте :any или :Error
+            alert('Ошибка загрузки картинки: ' + error.message)
+            console.log(error)
+        }
     }
 
     if (loading) return <div className="min-h-screen bg-background flex items-center justify-center text-primary">...</div>

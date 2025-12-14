@@ -40,6 +40,7 @@ export default function Home() {
 
   const PLACEHOLDER_IMG = '/placeholder.png'
   const [userAvatar, setUserAvatar] = useState(PLACEHOLDER_IMG)
+  const [currentUsername, setCurrentUsername] = useState<string | null>(null)
   const [commentInputs, setCommentInputs] = useState<{ [key: string]: string }>({})
 
   useEffect(() => {
@@ -56,9 +57,18 @@ export default function Home() {
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
       setUser(user)
-      const { data: profile } = await supabase.from('profiles').select('username, avatar_url').eq('id', user.id).single()
-      if (!profile?.username) router.push('/settings') // Настройки теперь там
-      else if (profile.avatar_url) setUserAvatar(profile.avatar_url)
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('username, avatar_url')
+        .eq('id', user.id)
+        .single()
+
+      if (!profile?.username) {
+        router.push('/settings') // Или complete-profile
+      } else {
+        setUserAvatar(profile.avatar_url || PLACEHOLDER_IMG)
+        setCurrentUsername(profile.username) // <--- СОХРАНЯЕМ ЮЗЕРНЕЙМ
+      }
     }
     fetchPosts(user)
   }
@@ -215,7 +225,7 @@ export default function Home() {
             )}
 
             {user ? (
-              <Link href={`/u/${user.id}`} className="block relative ml-1">
+              <Link href={currentUsername ? `/u/${currentUsername}` : '#'} className="block relative ml-1">
                 <img
                   src={userAvatar}
                   className="w-10 h-10 rounded-2xl object-cover border border-border hover:border-primary transition duration-300"

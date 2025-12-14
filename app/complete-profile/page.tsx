@@ -80,19 +80,20 @@ export default function CompleteProfile() {
 
             const file = event.target.files[0]
             const fileExt = file.name.split('.').pop()
-            const randomId = Math.random().toString(36).substring(2, 10);
-            const filePath = `${userId}-${Date.now()}-${randomId}.${fileExt}`
+            // Генерируем чистое имя файла (только латиница и цифры), чтобы избежать проблем с кодировкой
+            const randomString = Math.random().toString(36).substring(7)
+            const filePath = `${userId}-${Date.now()}-${randomString}.${fileExt}`
 
             const { error: uploadError } = await supabase.storage
                 .from('avatars')
-                .upload(filePath, file)
+                .upload(filePath, file, { upsert: true }) // <--- ВАЖНО: upsert: true
 
             if (uploadError) throw uploadError
 
             const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
             setAvatarUrl(data.publicUrl)
-        } catch (error) {
-            alert('Ошибка загрузки картинки!')
+        } catch (error: any) { // Добавьте :any или :Error
+            alert('Ошибка загрузки картинки: ' + error.message)
             console.log(error)
         }
     }
