@@ -77,58 +77,72 @@ export default function Settings() {
         }
     }
 
-    const checkAnimatedWebP = (file: File): Promise<boolean> => {
-        return new Promise((resolve) => {
-            const reader = new FileReader()
-            reader.readAsArrayBuffer(file)
-            reader.onload = () => {
-                const buffer = reader.result as ArrayBuffer
-                const uint8 = new Uint8Array(buffer)
-                // Ищем заголовок 'ANIM' (hex: 41 4E 49 4D)
-                const len = uint8.length
-                for (let i = 0; i < len - 4; i++) {
-                    if (uint8[i] === 0x41 && uint8[i + 1] === 0x4E && uint8[i + 2] === 0x49 && uint8[i + 3] === 0x4D) {
-                        resolve(true)
+    const convertToJpg = (file: File): Promise<File> => {
+        return new Promise((resolve, reject) => {
+            const img = new Image()
+            const url = URL.createObjectURL(file)
+
+            img.onload = () => {
+                // Создаем холст
+                const canvas = document.createElement('canvas')
+                canvas.width = img.width
+                canvas.height = img.height
+                const ctx = canvas.getContext('2d')
+
+                if (!ctx) {
+                    reject(new Error('Canvas context failed'))
+                    return
+                }
+
+                // Заливаем белым (на случай прозрачного PNG), иначе будет черный фон
+                ctx.fillStyle = '#FFFFFF'
+                ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+                // Рисуем картинку (это берет только ПЕРВЫЙ кадр, если это анимация)
+                ctx.drawImage(img, 0, 0)
+
+                // Конвертируем в JPG Blob
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error('Conversion failed'))
                         return
                     }
-                }
-                resolve(false)
+                    // Создаем новый файл
+                    const newFile = new File([blob], 'avatar.jpg', { type: 'image/jpeg' })
+                    resolve(newFile)
+
+                    // Чистим память
+                    URL.revokeObjectURL(url)
+                }, 'image/jpeg', 0.9) // 0.9 - качество (90%)
             }
-            reader.onerror = () => resolve(false)
+
+            img.onerror = (err) => reject(err)
+            img.src = url
         })
     }
 
     const uploadAvatar = async (event: any) => {
         try {
-            const file = event.target.files[0]
-            if (!file) return
+            const originalFile = event.target.files[0]
+            if (!originalFile) return
 
-            // 1. Проверка на GIF
-            if (file.type === 'image/gif') {
-                alert('GIF на аватарке запрещены.')
-                return
-            }
+            // 1. КОНВЕРТАЦИЯ
+            // Превращаем что угодно (WebP, PNG, GIF, APNG) в статичный JPG
+            const jpgFile = await convertToJpg(originalFile)
 
-            // 2. Проверка на анимированный WebP
-            if (file.type === 'image/webp') {
-                const isAnimated = await checkAnimatedWebP(file)
-                if (isAnimated) {
-                    alert('Анимированные аватарки запрещены!')
-                    return
-                }
-            }
+            // 2. ЗАГРУЗКА
+            // Имя файла теперь всегда заканчивается на .jpg
+            const filePath = `${userId}-${Date.now()}.jpg`
 
-            // Дальше стандартная загрузка...
-            const fileExt = file.name.split('.').pop()
-            const filePath = `${userId}-${Date.now()}.${fileExt}`
-
-            const { error } = await supabase.storage.from('avatars').upload(filePath, file)
+            const { error } = await supabase.storage.from('avatars').upload(filePath, jpgFile)
             if (error) throw error
 
             const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
             setAvatarUrl(data.publicUrl)
+
         } catch (error) {
-            alert('Ошибка загрузки')
+            console.error(error)
+            alert('Ошибка обработки картинки')
         }
     }
 
@@ -158,7 +172,7 @@ export default function Settings() {
                             />
                             <label className="absolute -bottom-2 -right-2 bg-primary p-2.5 rounded-xl cursor-pointer hover:bg-primary/90 transition shadow-lg text-primary-foreground border-4 border-background">
                                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
-                                <input type="file" onChange={uploadAvatar} className="hidden" accept="image/*" disabled={saving} />
+                                <input type="file" onChange={uploadAvatar} className="hidden" accept="image/*" />
                             </label>
                         </div>
                     </div>
