@@ -36,7 +36,8 @@ export default function CompleteProfile() {
     }, [])
 
     const handleSave = async () => {
-        if (!username.trim()) return alert('Введите имя пользователя!')
+        // ВАЛИДАЦИЯ:
+        if (!username.trim() || username.trim().length < 3) return alert('Никнейм должен быть минимум 3 символа!')
         if (!userId) return
 
         setLoading(true)
@@ -57,7 +58,11 @@ export default function CompleteProfile() {
         // Сохраняем
         const { error } = await supabase
             .from('profiles')
-            .update({ username, avatar_url: avatarUrl, full_name: username }) // Можно разделять имя и ник, но для простоты дублируем
+            .update({
+                username: username.trim(), // Обрезаем пробелы
+                avatar_url: avatarUrl,
+                full_name: username.trim() // Или добавьте отдельное поле ввода для имени
+            })
             .eq('id', userId)
 
         if (error) {
@@ -75,8 +80,8 @@ export default function CompleteProfile() {
 
             const file = event.target.files[0]
             const fileExt = file.name.split('.').pop()
-            // Имя файла = ID юзера + время, чтобы обновлялся кэш браузера
-            const filePath = `${userId}-${Date.now()}.${fileExt}`
+            const randomId = Math.random().toString(36).substring(2, 10);
+            const filePath = `${userId}-${Date.now()}-${randomId}.${fileExt}`
 
             const { error: uploadError } = await supabase.storage
                 .from('avatars')

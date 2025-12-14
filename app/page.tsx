@@ -308,7 +308,7 @@ export default function Home() {
 
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3">
-                  <Link href={`/u/${post.profiles?.id}`} className="group block">
+                  <Link href={`/u/${post.profiles?.username}`} className="group block">
                     <div className="w-10 h-10 rounded-2xl overflow-hidden bg-muted border border-border group-hover:border-primary transition duration-300">
                       <img
                         src={post.profiles?.avatar_url || PLACEHOLDER_IMG}
@@ -318,7 +318,7 @@ export default function Home() {
                     </div>
                   </Link>
                   <div>
-                    <Link href={`/u/${post.profiles?.id}`} className="font-bold text-sm text-foreground hover:text-primary transition">
+                    <Link href={`/u/${post.profiles?.username}`} className="font-bold text-sm text-foreground hover:text-primary transition">
                       {post.profiles?.username || 'User'}
                     </Link>
                     <p className="text-xs text-muted-foreground">{new Date(post.created_at).toLocaleDateString()}</p>

@@ -1,45 +1,65 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, use } from 'react'
 import { supabase } from '@/utils/supabase'
-import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Download } from 'lucide-react'
+import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Play, Pause } from 'lucide-react'
 
-// Тип для сообщения
 type Message = {
     id: string
     content: string
     file_url: string | null
+    file_type: 'image' | 'file' | 'audio' | null // Новое поле для определения типа
+    file_name: string | null // Новое поле для имени файла
     reply_to_id: string | null
     sender_id: string
     receiver_id: string
     created_at: string
 }
 
-export default function ChatPage() {
-    const { id: partnerId } = useParams()
+export default function ChatPage({ params }: { params: Promise<{ id: string }> }) {
+    // Next.js 15 unwrap params
+    const { id: partnerId } = use(params)
+
     const [messages, setMessages] = useState<Message[]>([])
     const [newMessage, setNewMessage] = useState('')
-
-    // Состояния для новых фич
     const [currentUser, setCurrentUser] = useState<any>(null)
     const [partnerProfile, setPartnerProfile] = useState<any>(null)
+
+    // Файлы
     const [file, setFile] = useState<File | null>(null)
     const [filePreview, setFilePreview] = useState<string | null>(null)
-    const [replyTo, setReplyTo] = useState<Message | null>(null) // На какое сообщение отвечаем
 
+    // Голосовые
+    const [isRecording, setIsRecording] = useState(false)
+    const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
+    const [audioChunks, setAudioChunks] = useState<Blob[]>([])
+    const [recordingTime, setRecordingTime] = useState(0)
+    const timerRef = useRef<NodeJS.Timeout | null>(null)
+
+    // Аудио плеер (простой)
+    const [playingAudio, setPlayingAudio] = useState<string | null>(null) // ID сообщения, которое играет
+    const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({})
+
+    const [replyTo, setReplyTo] = useState<Message | null>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
     useEffect(() => {
+        // Запрос разрешения на уведомления
+        if ('Notification' in window && Notification.permission !== 'granted') {
+            Notification.requestPermission()
+        }
         init()
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current)
+        }
     }, [partnerId])
 
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight
         }
-    }, [messages, replyTo, filePreview]) // Скроллим также при выборе файла или ответа
+    }, [messages, replyTo, filePreview, isRecording])
 
     const init = async () => {
         const { data: { user } } = await supabase.auth.getUser()
@@ -51,20 +71,24 @@ export default function ChatPage() {
 
         fetchMessages(user.id)
 
-        // ПОДПИСКА НА ВСЕ СОБЫТИЯ (INSERT, DELETE)
         const channel = supabase
             .channel(`room:${partnerId}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
-
-                // 1. Новое сообщение
                 if (payload.eventType === 'INSERT') {
                     const msg = payload.new as Message
-                    if ((msg.sender_id === partnerId) || (msg.receiver_id === partnerId)) {
+                    if ((msg.sender_id === partnerId && msg.receiver_id === user.id) ||
+                        (msg.sender_id === user.id && msg.receiver_id === partnerId)) {
                         setMessages((prev) => [...prev, msg])
+
+                        // Уведомление
+                        if (msg.sender_id === partnerId && document.hidden) {
+                            new Notification(`Новое сообщение от ${profile?.username}`, {
+                                body: msg.content || (msg.file_type === 'audio' ? 'Голосовое сообщение' : 'Файл'),
+                                icon: profile?.avatar_url || '/placeholder.png'
+                            })
+                        }
                     }
                 }
-
-                // 2. Удаление сообщения
                 if (payload.eventType === 'DELETE') {
                     const deletedId = payload.old.id
                     setMessages((prev) => prev.filter(m => m.id !== deletedId))
@@ -85,19 +109,122 @@ export default function ChatPage() {
         if (data) setMessages(data)
     }
 
-    // --- ЛОГИКА ОТПРАВКИ ---
-
+    // --- ФАЙЛЫ ---
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
             const f = e.target.files[0]
             setFile(f)
-            // Если картинка - делаем превью
             if (f.type.startsWith('image/')) {
                 setFilePreview(URL.createObjectURL(f))
             } else {
-                setFilePreview(null) // Для обычных файлов превью иконкой
+                setFilePreview(null)
             }
         }
+    }
+
+    // --- ГОЛОСОВЫЕ ---
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            const recorder = new MediaRecorder(stream)
+            setMediaRecorder(recorder)
+            setAudioChunks([])
+
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0) setAudioChunks((prev) => [...prev, e.data])
+            }
+
+            recorder.start()
+            setIsRecording(true)
+            setRecordingTime(0)
+            timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000)
+        } catch (err) {
+            alert('Не удалось получить доступ к микрофону')
+        }
+    }
+
+    const stopRecording = () => {
+        if (mediaRecorder && isRecording) {
+            mediaRecorder.stop()
+            setIsRecording(false)
+            if (timerRef.current) clearInterval(timerRef.current)
+
+            // Ждем событие stop, чтобы получить полный blob
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
+                const audioFile = new File([audioBlob], 'voice-message.webm', { type: 'audio/webm' })
+                await sendMessage(audioFile, 'audio')
+            }
+
+            mediaRecorder.stream.getTracks().forEach(track => track.stop()) // Остановить микрофон
+        }
+    }
+
+    const formatTime = (seconds: number) => {
+        const m = Math.floor(seconds / 60)
+        const s = seconds % 60
+        return `${m}:${s < 10 ? '0' : ''}${s}`
+    }
+
+    const toggleAudio = (msgId: string, url: string) => {
+        const audio = audioRefs.current[msgId]
+        if (!audio) {
+            const newAudio = new Audio(url)
+            newAudio.onended = () => setPlayingAudio(null)
+            audioRefs.current[msgId] = newAudio
+            newAudio.play()
+            setPlayingAudio(msgId)
+        } else {
+            if (playingAudio === msgId) {
+                audio.pause()
+                setPlayingAudio(null)
+            } else {
+                // Остановить другие
+                Object.values(audioRefs.current).forEach(a => a.pause())
+                setPlayingAudio(msgId)
+                audio.play()
+            }
+        }
+    }
+
+    // --- ОТПРАВКА ---
+    const sendMessage = async (overrideFile?: File, overrideType?: string) => {
+        const fileToSend = overrideFile || file
+
+        if ((!newMessage.trim() && !fileToSend) || !currentUser) return
+
+        let uploadedUrl = null
+        let fileType = null
+        let fileName = null
+
+        if (fileToSend) {
+            const fileExt = fileToSend.name.split('.').pop()
+            const uniqueId = Math.random().toString(36).substring(7)
+            const filePath = `${currentUser.id}-${Date.now()}-${uniqueId}.${fileExt}`
+
+            const { error } = await supabase.storage.from('chat-attachments').upload(filePath, fileToSend)
+            if (!error) {
+                const { data } = supabase.storage.from('chat-attachments').getPublicUrl(filePath)
+                uploadedUrl = data.publicUrl
+                fileName = fileToSend.name
+
+                if (overrideType === 'audio') fileType = 'audio'
+                else if (fileToSend.type.startsWith('image/')) fileType = 'image'
+                else fileType = 'file'
+            }
+        }
+
+        await supabase.from('messages').insert({
+            sender_id: currentUser.id,
+            receiver_id: partnerId,
+            content: newMessage,
+            file_url: uploadedUrl,
+            file_type: fileType, // Нужно добавить эту колонку в БД, либо определять по расширению
+            file_name: fileName, // Нужно добавить эту колонку в БД
+            reply_to_id: replyTo?.id || null
+        })
+
+        clearComposer()
     }
 
     const clearComposer = () => {
@@ -108,130 +235,87 @@ export default function ChatPage() {
         if (fileInputRef.current) fileInputRef.current.value = ''
     }
 
-    const sendMessage = async () => {
-        if ((!newMessage.trim() && !file) || !currentUser) return
-
-        let uploadedUrl = null
-
-        // 1. Загрузка файла
-        if (file) {
-            const fileExt = file.name.split('.').pop()
-            const fileName = `${currentUser.id}-${Date.now()}.${fileExt}`
-            const { error } = await supabase.storage.from('chat-attachments').upload(fileName, file)
-            if (!error) {
-                const { data } = supabase.storage.from('chat-attachments').getPublicUrl(fileName)
-                uploadedUrl = data.publicUrl
-            }
-        }
-
-        // 2. Отправка в БД
-        await supabase.from('messages').insert({
-            sender_id: currentUser.id,
-            receiver_id: partnerId,
-            content: newMessage,
-            file_url: uploadedUrl,
-            reply_to_id: replyTo?.id || null
-        })
-
-        clearComposer()
-    }
-
-    const deleteMessage = async (msgId: string) => {
-        if (!confirm('Удалить сообщение?')) return
-        await supabase.from('messages').delete().eq('id', msgId)
-        // Realtime сам обновит UI
-    }
-
-    // Вспомогательная функция для поиска сообщения, на которое ответили
-    const findReplyMessage = (replyId: string | null) => {
-        if (!replyId) return null
-        return messages.find(m => m.id === replyId)
-    }
-
     return (
         <div className="flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border">
-
-            {/* Шапка */}
+            {/* Header */}
             <div className="flex items-center gap-4 p-4 border-b border-border bg-card shadow-sm z-10">
                 <Link href="/messages" className="text-muted-foreground hover:text-foreground">
                     <ArrowLeft />
                 </Link>
                 {partnerProfile ? (
-                    <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition">
+                    <Link href={`/u/${partnerProfile.username}`} className="flex items-center gap-3 hover:opacity-80 transition">
                         <img src={partnerProfile.avatar_url || '/placeholder.png'} className="w-9 h-9 rounded-full object-cover" />
                         <span className="font-bold">{partnerProfile.username}</span>
                     </Link>
                 ) : <span>Загрузка...</span>}
             </div>
 
-            {/* Сообщения */}
-            <div className="flex-grow overflow-y-auto p-4 space-y-1 bg-background" ref={scrollRef}>
+            {/* Messages */}
+            <div className="flex-grow overflow-y-auto p-4 space-y-2 bg-background" ref={scrollRef}>
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
-                    const replyMsg = findReplyMessage(msg.reply_to_id)
-                    const isImage = msg.file_url && (msg.file_url.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null)
+                    const replyMsg = messages.find(m => m.id === msg.reply_to_id)
+
+                    // Определение типа файла, если колонки в БД еще нет (fallback)
+                    let type = msg.file_type
+                    if (!type && msg.file_url) {
+                        if (msg.file_url.match(/\.(jpeg|jpg|gif|png|webp)$/i)) type = 'image'
+                        else if (msg.file_url.match(/\.(webm|mp3|wav)$/i)) type = 'audio'
+                        else type = 'file'
+                    }
 
                     return (
-                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-4`}>
+                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-2`}>
+                            <div className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border border-transparent 
+                                ${isMe ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-muted text-foreground rounded-bl-none border-border'}`}>
 
-                            {/* Само сообщение */}
-                            <div
-                                className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border border-transparent ${isMe
-                                        ? 'bg-primary text-primary-foreground rounded-br-none'
-                                        : 'bg-muted text-foreground rounded-bl-none border-border'
-                                    }`}
-                            >
-                                {/* Блок цитаты (Reply) */}
                                 {replyMsg && (
-                                    <div className={`mb-2 text-xs border-l-2 pl-2 py-1 cursor-pointer opacity-80 ${isMe ? 'border-white/50' : 'border-primary'}`}>
+                                    <div className="mb-2 text-xs border-l-2 pl-2 py-1 opacity-80 border-current">
                                         <span className="font-bold block">{replyMsg.sender_id === currentUser?.id ? 'Вы' : partnerProfile?.username}</span>
                                         <span className="truncate block max-w-[150px]">
-                                            {replyMsg.file_url ? '[Вложение]' : replyMsg.content}
+                                            {replyMsg.file_url ? '[Файл]' : replyMsg.content}
                                         </span>
                                     </div>
                                 )}
 
-                                {/* Файл / Картинка */}
-                                {msg.file_url && (
-                                    <div className="mb-2">
-                                        {isImage ? (
-                                            <a href={msg.file_url} target="_blank" rel="noopener noreferrer">
-                                                <img src={msg.file_url} className="rounded-lg max-w-full max-h-64 object-cover" />
-                                            </a>
-                                        ) : (
-                                            <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-black/10 p-2 rounded-lg hover:bg-black/20 transition">
-                                                <FileText size={20} />
-                                                <span className="underline text-sm">Скачать файл</span>
-                                            </a>
-                                        )}
+                                {/* Контент */}
+                                {type === 'image' && (
+                                    <a href={msg.file_url!} target="_blank"><img src={msg.file_url!} className="rounded-lg max-w-full max-h-64 object-cover mb-1" /></a>
+                                )}
+
+                                {type === 'audio' && (
+                                    <div className="flex items-center gap-2 bg-black/10 p-2 rounded-lg mb-1 min-w-[150px]">
+                                        <button onClick={() => toggleAudio(msg.id, msg.file_url!)}>
+                                            {playingAudio === msg.id ? <Pause size={20} /> : <Play size={20} />}
+                                        </button>
+                                        <div className="h-1 bg-current opacity-30 flex-grow rounded-full"></div>
+                                        <span className="text-xs">Голосовое</span>
                                     </div>
                                 )}
 
-                                {/* Текст */}
-                                {msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>}
+                                {type === 'file' && (
+                                    <a href={msg.file_url!} download target="_blank" className="flex items-center gap-2 bg-black/10 p-2 rounded-lg hover:bg-black/20 transition mb-1">
+                                        <FileText size={24} />
+                                        <div className="flex flex-col overflow-hidden">
+                                            <span className="text-sm font-medium truncate max-w-[150px]">{msg.file_name || 'Файл'}</span>
+                                            <span className="text-[10px] opacity-70 underline">Скачать</span>
+                                        </div>
+                                    </a>
+                                )}
 
-                                <div className={`text-[10px] mt-1 text-right opacity-70`}>
+                                {/* Текст с переносом слов */}
+                                {msg.content && (
+                                    <p className="whitespace-pre-wrap break-words break-all overflow-hidden">{msg.content}</p>
+                                )}
+
+                                <div className="text-[10px] mt-1 text-right opacity-70">
                                     {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </div>
 
-                                {/* КНОПКИ УПРАВЛЕНИЯ (появляются при наведении) */}
-                                <div className={`absolute top-0 ${isMe ? '-left-16' : '-right-16'} h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
-                                    <button
-                                        onClick={() => setReplyTo(msg)}
-                                        className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"
-                                        title="Ответить"
-                                    >
-                                        <Reply size={14} />
-                                    </button>
-                                    {isMe && (
-                                        <button
-                                            onClick={() => deleteMessage(msg.id)}
-                                            className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-red-500 shadow-sm"
-                                            title="Удалить"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    )}
+                                {/* Actions */}
+                                <div className={`absolute top-0 ${isMe ? '-left-8' : '-right-8'} h-full flex flex-col justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}>
+                                    <button onClick={() => setReplyTo(msg)} className="text-muted-foreground hover:text-primary"><Reply size={14} /></button>
+                                    {isMe && <button onClick={() => confirm('Удалить?') && supabase.from('messages').delete().eq('id', msg.id)} className="text-muted-foreground hover:text-red-500"><Trash2 size={14} /></button>}
                                 </div>
                             </div>
                         </div>
@@ -239,72 +323,56 @@ export default function ChatPage() {
                 })}
             </div>
 
-            {/* Панель ввода */}
+            {/* Input Area */}
             <div className="p-3 bg-card border-t border-border">
-
-                {/* Панель "Ответ на сообщение" */}
                 {replyTo && (
-                    <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px] animate-in slide-in-from-bottom-2">
-                        <div className="text-sm border-l-2 border-primary pl-2">
-                            <span className="text-primary font-bold block">Ответ {replyTo.sender_id === currentUser?.id ? 'себе' : partnerProfile?.username}</span>
-                            <span className="text-muted-foreground text-xs truncate block max-w-[200px]">
-                                {replyTo.file_url ? '[Файл] ' : ''}{replyTo.content}
-                            </span>
-                        </div>
-                        <button onClick={() => setReplyTo(null)} className="text-muted-foreground hover:text-foreground"><X size={16} /></button>
+                    <div className="flex justify-between bg-muted/50 p-2 rounded-t-xl mb-1 text-sm border-l-4 border-primary">
+                        <div>Ответ для: {replyTo.sender_id === currentUser.id ? 'Себя' : partnerProfile?.username}</div>
+                        <button onClick={() => setReplyTo(null)}><X size={14} /></button>
                     </div>
                 )}
-
-                {/* Панель "Выбран файл" */}
                 {file && (
-                    <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]">
-                        <div className="flex items-center gap-2">
-                            {filePreview ? (
-                                <img src={filePreview} className="w-8 h-8 rounded object-cover border border-border" />
-                            ) : (
-                                <FileText className="text-primary" />
-                            )}
-                            <span className="text-sm text-foreground truncate max-w-[200px]">{file.name}</span>
-                        </div>
-                        <button onClick={() => { setFile(null); setFilePreview(null) }} className="text-muted-foreground hover:text-foreground"><X size={16} /></button>
+                    <div className="flex justify-between bg-muted/50 p-2 rounded-t-xl mb-1 text-sm">
+                        <span className="truncate max-w-[200px]">{file.name}</span>
+                        <button onClick={() => { setFile(null); setFilePreview(null) }}><X size={14} /></button>
                     </div>
                 )}
 
                 <div className="flex items-end gap-2">
-                    {/* Кнопка Файла */}
-                    <label className="p-3 rounded-xl cursor-pointer text-muted-foreground hover:bg-muted hover:text-primary transition h-[50px] flex items-center justify-center">
+                    {/* Attach */}
+                    <label className="p-3 text-muted-foreground hover:text-primary cursor-pointer">
                         <Paperclip size={20} />
-                        <input
-                            type="file"
-                            onChange={handleFileSelect}
-                            className="hidden"
-                            ref={fileInputRef}
-                        />
+                        <input type="file" onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
                     </label>
 
-                    {/* Поле ввода */}
+                    {/* Input */}
                     <textarea
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault();
-                                sendMessage();
-                            }
-                        }}
+                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage())}
                         placeholder="Сообщение..."
-                        className="flex-grow bg-muted text-foreground p-3 rounded-xl focus:outline-none focus:border-primary border border-transparent transition placeholder-muted-foreground resize-none min-h-[50px] max-h-[120px]"
+                        className="flex-grow bg-muted text-foreground p-3 rounded-xl resize-none max-h-32 focus:outline-none focus:ring-1 focus:ring-primary"
                         rows={1}
                     />
 
-                    {/* Кнопка Отправки */}
-                    <button
-                        onClick={sendMessage}
-                        className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg shadow-primary/20 h-[50px] aspect-square flex items-center justify-center"
-                    >
-                        <Send size={20} />
-                    </button>
+                    {/* Voice / Send */}
+                    {newMessage.trim() || file ? (
+                        <button onClick={() => sendMessage()} className="p-3 bg-primary text-primary-foreground rounded-xl hover:opacity-90">
+                            <Send size={20} />
+                        </button>
+                    ) : (
+                        <button
+                            onMouseDown={startRecording}
+                            onMouseUp={stopRecording}
+                            onTouchStart={(e) => { e.preventDefault(); startRecording() }}
+                            onTouchEnd={(e) => { e.preventDefault(); stopRecording() }}
+                            className={`p-3 rounded-xl transition ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-muted text-muted-foreground hover:text-primary'}`}
+                        >
+                            {isRecording ? <Square size={20} /> : <Mic size={20} />}
+                        </button>
+                    )}
                 </div>
+                {isRecording && <div className="text-center text-xs text-red-500 mt-1">Запись: {formatTime(recordingTime)}</div>}
             </div>
         </div>
     )
