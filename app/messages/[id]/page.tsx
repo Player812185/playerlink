@@ -46,23 +46,6 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     const scrollRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
-    useEffect(() => {
-        // Запрос разрешения на уведомления
-        if ('Notification' in window && Notification.permission !== 'granted') {
-            Notification.requestPermission()
-        }
-        init()
-        return () => {
-            if (timerRef.current) clearInterval(timerRef.current)
-        }
-    }, [partnerId])
-
-    useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-        }
-    }, [messages, replyTo, filePreview, isRecording])
-
     const init = async () => {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
@@ -236,6 +219,23 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         setReplyTo(null)
         if (fileInputRef.current) fileInputRef.current.value = ''
     }
+
+    useEffect(() => {
+        // Запрос разрешения на уведомления
+        if ('Notification' in window && Notification.permission !== 'granted') {
+            Notification.requestPermission()
+        }
+        init()
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current)
+        }
+    }, [partnerId])
+
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        }
+    }, [messages, replyTo, filePreview, isRecording])
 
     return (
         <div className="flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border">

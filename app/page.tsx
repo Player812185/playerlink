@@ -45,16 +45,6 @@ export default function Home() {
   const [currentUsername, setCurrentUsername] = useState<string | null>(null)
   const [commentInputs, setCommentInputs] = useState<{ [key: string]: string }>({})
 
-  useEffect(() => {
-    checkUserAndFetch()
-    const channel = supabase
-      .channel('realtime_feed')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => fetchPosts())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'likes' }, () => fetchPosts())
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [])
-
   const checkUserAndFetch = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
@@ -203,6 +193,16 @@ export default function Home() {
     setContent(`${before}${prefix}${selection}${suffix}${after}`)
     textarea.focus()
   }
+
+  useEffect(() => {
+    checkUserAndFetch()
+    const channel = supabase
+      .channel('realtime_feed')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => fetchPosts())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'likes' }, () => fetchPosts())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
 
   return (
     <div className="min-h-screen pb-20 font-sans bg-background text-foreground transition-colors duration-300">

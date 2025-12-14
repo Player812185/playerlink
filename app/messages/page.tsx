@@ -11,10 +11,6 @@ export default function MessagesList() {
     const [loading, setLoading] = useState(true)
     const PLACEHOLDER_IMG = '/placeholder.png'
 
-    useEffect(() => {
-        loadConversations()
-    }, [])
-
     const loadConversations = async () => {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
@@ -61,6 +57,10 @@ export default function MessagesList() {
             }
         })
     }
+
+    useEffect(() => {
+        loadConversations()
+    }, [])
 
     return (
         <div className="min-h-screen bg-background text-foreground p-4 max-w-xl mx-auto">
