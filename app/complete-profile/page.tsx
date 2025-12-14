@@ -76,25 +76,27 @@ export default function CompleteProfile() {
 
     const uploadAvatar = async (event: any) => {
         try {
-            if (!event.target.files || event.target.files.length === 0) return
-
             const file = event.target.files[0]
+            if (!file) return
+
+            // --- НОВАЯ ПРОВЕРКА ---
+            if (file.type === 'image/gif') {
+                alert('GIF аватарки запрещены! Используйте JPG или PNG.')
+                return
+            }
+            // ----------------------
+
             const fileExt = file.name.split('.').pop()
-            // Генерируем чистое имя файла (только латиница и цифры), чтобы избежать проблем с кодировкой
-            const randomString = Math.random().toString(36).substring(7)
-            const filePath = `${userId}-${Date.now()}-${randomString}.${fileExt}`
+            const filePath = `${userId}-${Date.now()}.${fileExt}`
 
-            const { error: uploadError } = await supabase.storage
-                .from('avatars')
-                .upload(filePath, file, { upsert: true }) // <--- ВАЖНО: upsert: true
+            const { error } = await supabase.storage.from('avatars').upload(filePath, file)
 
-            if (uploadError) throw uploadError
+            if (error) throw error
 
             const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
             setAvatarUrl(data.publicUrl)
-        } catch (error: any) { // Добавьте :any или :Error
-            alert('Ошибка загрузки картинки: ' + error.message)
-            console.log(error)
+        } catch (error) {
+            alert('Ошибка загрузки. Возможно, формат файла не поддерживается.')
         }
     }
 
