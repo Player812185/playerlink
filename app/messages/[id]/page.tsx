@@ -4,6 +4,7 @@ import { supabase } from '@/utils/supabase'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck } from 'lucide-react'
+import { RealtimeChannel } from '@supabase/supabase-js'
 
 type Message = {
     id: string
@@ -28,6 +29,9 @@ export default function ChatPage() {
     // Статусы
     const [isPartnerOnline, setIsPartnerOnline] = useState(false)
     const [isTyping, setIsTyping] = useState(false)
+
+    // Ссылка на активный канал связи (чтобы отправлять typing)
+    const channelRef = useRef<RealtimeChannel | null>(null)
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
     // Файлы
@@ -52,18 +56,22 @@ export default function ChatPage() {
             const { data: myProf } = await supabase.from('profiles').select('*').eq('id', user.id).single()
             setMyProfile(myProf)
 
-            // Загружаем профиль партнера (включая last_seen)
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', partnerId).single()
             setPartnerProfile(profile)
 
             fetchMessages(user.id)
             markMessagesAsRead(user.id)
 
-            // --- КАНАЛ СВЯЗИ ---
-            const channel = supabase.channel(`room:${partnerId}`)
+            // --- НАСТРОЙКА КАНАЛА ЧАТА ---
+            // Сохраняем канал в ref, чтобы потом использовать в handleTyping
+            channelRef.current = supabase.channel(`room:${partnerId}`, {
+                config: {
+                    broadcast: { self: true }, // Чтобы мы получали свои же сообщения (для теста)
+                },
+            })
 
-            channel
-                // 1. Слушаем сообщения (INSERT/DELETE/UPDATE)
+            channelRef.current
+                // 1. Слушаем сообщения
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
                     if (payload.eventType === 'INSERT') {
                         const msg = payload.new as Message
@@ -79,36 +87,30 @@ export default function ChatPage() {
                         setMessages((prev) => prev.map(m => m.id === payload.new.id ? payload.new as Message : m))
                     }
                 })
-                // 2. Слушаем "Печатает..." (Broadcast)
+                // 2. Слушаем "Печатает..."
                 .on('broadcast', { event: 'typing' }, (payload) => {
-                    // Если печатает партнер (а не я сам в другой вкладке)
+                    // Важно: проверяем, что это не мы сами печатаем в другой вкладке
                     if (payload.payload.user_id === partnerId) {
                         setIsTyping(true)
-                        // Сбрасываем таймер, если пришел новый сигнал
                         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
-                        // Убираем надпись через 3 секунды тишины
                         typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000)
                     }
                 })
-                // 3. Слушаем статус Онлайн (Presence)
+                .subscribe()
+
+            // --- СЛЕЖКА ЗА ОНЛАЙНОМ (Глобальный канал) ---
+            const globalPresence = supabase.channel('online-users')
+            globalPresence
                 .on('presence', { event: 'sync' }, () => {
-                    const state = channel.presenceState()
-                    // Проверяем, есть ли партнер в этой комнате ИЛИ в глобальной комнате (нужно два канала, но пока упростим)
-                    // Для точного онлайна лучше использовать отдельный глобальный канал, как мы делали раньше.
-                    // Но чтобы не плодить каналы, давай проверим глобальный канал отдельно.
+                    const state = globalPresence.presenceState()
+                    // Ищем партнера в списке онлайн
+                    const isOnline = Object.values(state).flat().some((u: any) => u.user_id === partnerId)
+                    setIsPartnerOnline(isOnline)
                 })
                 .subscribe()
 
-            // Отдельный канал для глобального онлайна (так надежнее)
-            const globalPresence = supabase.channel('online-users')
-            globalPresence.on('presence', { event: 'sync' }, () => {
-                const state = globalPresence.presenceState()
-                const isOnline = Object.values(state).flat().some((u: any) => u.user_id === partnerId)
-                setIsPartnerOnline(isOnline)
-            }).subscribe()
-
             return () => {
-                supabase.removeChannel(channel)
+                supabase.removeChannel(channelRef.current!)
                 supabase.removeChannel(globalPresence)
             }
         }
@@ -133,13 +135,13 @@ export default function ChatPage() {
         await supabase.from('messages').update({ is_read: true }).eq('sender_id', partnerId).eq('receiver_id', myId).eq('is_read', false)
     }
 
-    // --- ОТПРАВКА СИГНАЛА "ПЕЧАТАЕТ" ---
+    // --- ИСПРАВЛЕННАЯ ФУНКЦИЯ TYPING ---
     const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setNewMessage(e.target.value)
 
-        if (currentUser) {
-            const channel = supabase.channel(`room:${partnerId}`)
-            channel.send({
+        // Отправляем сигнал только если канал подключен и пользователь авторизован
+        if (currentUser && channelRef.current) {
+            channelRef.current.send({
                 type: 'broadcast',
                 event: 'typing',
                 payload: { user_id: currentUser.id }
@@ -149,12 +151,6 @@ export default function ChatPage() {
 
     // --- ФАЙЛЫ ---
     const processFile = (f: File) => {
-        // Проверка: Запрещаем video (включая video/webm, если это не голосовое), но разрешаем image/webp
-        if (f.type.startsWith('video/')) {
-            alert('Видео запрещены. Используйте фото или документы.')
-            return
-        }
-
         setFile(f)
         if (f.type.startsWith('image/')) {
             setFilePreview(URL.createObjectURL(f))
@@ -262,14 +258,18 @@ export default function ChatPage() {
         await supabase.from('messages').delete().eq('id', msg.id)
     }
 
-    // Форматирование времени "был в сети"
     const getLastSeenText = () => {
         if (isPartnerOnline) return 'В сети'
         if (isTyping) return 'Печатает...'
         if (!partnerProfile?.last_seen) return 'Оффлайн'
 
         const date = new Date(partnerProfile.last_seen)
-        return `Был(а) в сети ${date.toLocaleDateString()} в ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        const now = new Date()
+        const diff = (now.getTime() - date.getTime()) / 1000 / 60 // разница в минутах
+
+        if (diff < 2) return 'Был(а) только что' // Небольшой хак для UX
+
+        return `Был(а) ${date.toLocaleDateString()} в ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     }
 
     return (
@@ -284,12 +284,15 @@ export default function ChatPage() {
                         <div className="relative">
                             <img src={partnerProfile.avatar_url || '/placeholder.png'} className="w-10 h-10 rounded-full object-cover" />
                             {isPartnerOnline && (
-                                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full"></span>
+                                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full animate-pulse"></span>
                             )}
                         </div>
                         <div className="flex flex-col">
                             <span className="font-bold leading-none">{partnerProfile.username}</span>
-                            <span className={`text-xs mt-1 ${isPartnerOnline || isTyping ? 'text-green-500 font-medium' : 'text-muted-foreground'}`}>
+                            <span className={`text-xs mt-1 transition-colors duration-300 ${isTyping
+                                    ? 'text-primary font-bold animate-pulse'
+                                    : isPartnerOnline ? 'text-green-500 font-medium' : 'text-muted-foreground'
+                                }`}>
                                 {isTyping ? 'Печатает...' : getLastSeenText()}
                             </span>
                         </div>
@@ -297,6 +300,7 @@ export default function ChatPage() {
                 ) : <span>Загрузка...</span>}
             </div>
 
+            {/* Сообщения */}
             <div className="flex-grow overflow-y-auto p-4 space-y-1 bg-background" ref={scrollRef}>
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
@@ -380,7 +384,7 @@ export default function ChatPage() {
                     ) : (
                         <textarea
                             value={newMessage}
-                            onChange={handleTyping} // <--- ОТПРАВЛЯЕМ СИГНАЛ "ПЕЧАТАЕТ"
+                            onChange={handleTyping}
                             onPaste={handlePaste}
                             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                             placeholder="Сообщение..."
