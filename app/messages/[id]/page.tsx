@@ -26,26 +26,27 @@ export default function ChatPage() {
     const [partnerProfile, setPartnerProfile] = useState<any>(null)
     const [myProfile, setMyProfile] = useState<any>(null)
 
-    // Статусы
     const [isPartnerOnline, setIsPartnerOnline] = useState(false)
     const [isTyping, setIsTyping] = useState(false)
 
-    // Ссылка на активный канал связи (чтобы отправлять typing)
     const channelRef = useRef<RealtimeChannel | null>(null)
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-    // Файлы
     const [file, setFile] = useState<File | null>(null)
     const [filePreview, setFilePreview] = useState<string | null>(null)
     const [replyTo, setReplyTo] = useState<Message | null>(null)
-
-    // Голосовые
     const [isRecording, setIsRecording] = useState(false)
+
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
-
     const scrollRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+
+    // --- ГЕНЕРАТОР ОБЩЕЙ КОМНАТЫ ---
+    const getRoomId = (userId1: string, userId2: string) => {
+        // Сортируем ID, чтобы название комнаты было одинаковым у обоих участников
+        return [userId1, userId2].sort().join('-')
+    }
 
     useEffect(() => {
         const init = async () => {
@@ -62,20 +63,19 @@ export default function ChatPage() {
             fetchMessages(user.id)
             markMessagesAsRead(user.id)
 
-            // --- НАСТРОЙКА КАНАЛА ЧАТА ---
-            // Сохраняем канал в ref, чтобы потом использовать в handleTyping
-            channelRef.current = supabase.channel(`room:${partnerId}`, {
-                config: {
-                    broadcast: { self: true }, // Чтобы мы получали свои же сообщения (для теста)
-                },
+            // 1. Имя общей комнаты
+            const roomId = getRoomId(user.id, partnerId as string)
+
+            // 2. Подключаемся к каналу ЧАТА (Сообщения + Печатает)
+            channelRef.current = supabase.channel(`chat:${roomId}`, {
+                config: { broadcast: { self: false } }
             })
 
             channelRef.current
-                // 1. Слушаем сообщения
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
                     if (payload.eventType === 'INSERT') {
                         const msg = payload.new as Message
-                        if ((msg.sender_id === partnerId) || (msg.receiver_id === partnerId)) {
+                        if ((msg.sender_id === partnerId) || (msg.sender_id === user.id)) {
                             setMessages((prev) => [...prev, msg])
                             if (msg.sender_id === partnerId) markMessagesAsRead(user.id)
                         }
@@ -87,30 +87,36 @@ export default function ChatPage() {
                         setMessages((prev) => prev.map(m => m.id === payload.new.id ? payload.new as Message : m))
                     }
                 })
-                // 2. Слушаем "Печатает..."
                 .on('broadcast', { event: 'typing' }, (payload) => {
-                    // Важно: проверяем, что это не мы сами печатаем в другой вкладке
-                    if (payload.payload.user_id === partnerId) {
-                        setIsTyping(true)
-                        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
-                        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000)
-                    }
+                    // Сигнал пришел в общую комнату, значит это точно собеседник (т.к. self: false)
+                    setIsTyping(true)
+                    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+                    typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000)
                 })
                 .subscribe()
 
-            // --- СЛЕЖКА ЗА ОНЛАЙНОМ (Глобальный канал) ---
+            // 3. Подключаемся к ГЛОБАЛЬНОМУ каналу ОНЛАЙНА
+            // Важно: OnlinePresence.tsx должен работать в layout.tsx!
             const globalPresence = supabase.channel('online-users')
             globalPresence
                 .on('presence', { event: 'sync' }, () => {
                     const state = globalPresence.presenceState()
-                    // Ищем партнера в списке онлайн
-                    const isOnline = Object.values(state).flat().some((u: any) => u.user_id === partnerId)
-                    setIsPartnerOnline(isOnline)
+                    // Ищем ID партнера во всех присутствующих
+                    // Структура state: { "id": [ {user_id: "...", ...} ] }
+                    let found = false
+                    for (const key in state) {
+                        const users = state[key] as any[]
+                        if (users.find(u => u.user_id === partnerId)) {
+                            found = true
+                            break
+                        }
+                    }
+                    setIsPartnerOnline(found)
                 })
                 .subscribe()
 
             return () => {
-                supabase.removeChannel(channelRef.current!)
+                if (channelRef.current) supabase.removeChannel(channelRef.current)
                 supabase.removeChannel(globalPresence)
             }
         }
@@ -135,21 +141,17 @@ export default function ChatPage() {
         await supabase.from('messages').update({ is_read: true }).eq('sender_id', partnerId).eq('receiver_id', myId).eq('is_read', false)
     }
 
-    // --- ИСПРАВЛЕННАЯ ФУНКЦИЯ TYPING ---
     const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setNewMessage(e.target.value)
-
-        // Отправляем сигнал только если канал подключен и пользователь авторизован
         if (currentUser && channelRef.current) {
             channelRef.current.send({
                 type: 'broadcast',
                 event: 'typing',
-                payload: { user_id: currentUser.id }
+                payload: { user_id: currentUser.id } // payload не особо важен, главное сам факт события
             })
         }
     }
 
-    // --- ФАЙЛЫ ---
     const processFile = (f: File) => {
         setFile(f)
         if (f.type.startsWith('image/')) {
@@ -170,7 +172,6 @@ export default function ChatPage() {
         }
     }
 
-    // --- ГОЛОСОВЫЕ ---
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -201,7 +202,6 @@ export default function ChatPage() {
         }
     }
 
-    // --- ОТПРАВКА ---
     const sendMessage = async (overrideFile?: File, type: 'text' | 'audio' = 'text') => {
         const fileToSend = overrideFile || file
         const textToSend = type === 'audio' ? '' : newMessage
@@ -265,16 +265,14 @@ export default function ChatPage() {
 
         const date = new Date(partnerProfile.last_seen)
         const now = new Date()
-        const diff = (now.getTime() - date.getTime()) / 1000 / 60 // разница в минутах
+        const diff = (now.getTime() - date.getTime()) / 1000 / 60
 
-        if (diff < 2) return 'Был(а) только что' // Небольшой хак для UX
-
+        if (diff < 2) return 'Был(а) только что'
         return `Был(а) ${date.toLocaleDateString()} в ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     }
 
     return (
         <div className="flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border">
-
             <div className="flex items-center gap-4 p-4 border-b border-border bg-card shadow-sm z-10">
                 <Link href="/messages" className="text-muted-foreground hover:text-foreground">
                     <ArrowLeft />
@@ -283,16 +281,11 @@ export default function ChatPage() {
                     <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition">
                         <div className="relative">
                             <img src={partnerProfile.avatar_url || '/placeholder.png'} className="w-10 h-10 rounded-full object-cover" />
-                            {isPartnerOnline && (
-                                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full animate-pulse"></span>
-                            )}
+                            {isPartnerOnline && <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full animate-pulse"></span>}
                         </div>
                         <div className="flex flex-col">
                             <span className="font-bold leading-none">{partnerProfile.username}</span>
-                            <span className={`text-xs mt-1 transition-colors duration-300 ${isTyping
-                                    ? 'text-primary font-bold animate-pulse'
-                                    : isPartnerOnline ? 'text-green-500 font-medium' : 'text-muted-foreground'
-                                }`}>
+                            <span className={`text-xs mt-1 transition-colors duration-300 ${isTyping ? 'text-primary font-bold animate-pulse' : isPartnerOnline ? 'text-green-500 font-medium' : 'text-muted-foreground'}`}>
                                 {isTyping ? 'Печатает...' : getLastSeenText()}
                             </span>
                         </div>
@@ -300,7 +293,6 @@ export default function ChatPage() {
                 ) : <span>Загрузка...</span>}
             </div>
 
-            {/* Сообщения */}
             <div className="flex-grow overflow-y-auto p-4 space-y-1 bg-background" ref={scrollRef}>
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
@@ -317,7 +309,6 @@ export default function ChatPage() {
                                         <span className="truncate block max-w-[150px]">{replyMsg.file_url ? '[Вложение]' : replyMsg.content}</span>
                                     </div>
                                 )}
-
                                 {msg.file_url && (
                                     <div className="mb-2">
                                         {isImage ? (
@@ -331,14 +322,11 @@ export default function ChatPage() {
                                         )}
                                     </div>
                                 )}
-
                                 {msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>}
-
                                 <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${isMe ? 'text-white/70' : 'text-muted-foreground'}`}>
                                     <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                     {isMe && <span>{msg.is_read ? <CheckCheck size={14} /> : <Check size={14} />}</span>}
                                 </div>
-
                                 <div className={`absolute top-0 ${isMe ? '-left-16' : '-right-16'} h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
                                     <button onClick={() => setReplyTo(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"><Reply size={14} /></button>
                                     {isMe && <button onClick={() => deleteMessage(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-red-500 shadow-sm"><Trash2 size={14} /></button>}
@@ -359,7 +347,6 @@ export default function ChatPage() {
                         <button onClick={() => setReplyTo(null)}><X size={16} /></button>
                     </div>
                 )}
-
                 {file && (
                     <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]">
                         <div className="flex items-center gap-2">
@@ -369,13 +356,11 @@ export default function ChatPage() {
                         <button onClick={() => { setFile(null); setFilePreview(null) }}><X size={16} /></button>
                     </div>
                 )}
-
                 <div className="flex items-end gap-2">
                     <label className="p-3 rounded-xl cursor-pointer text-muted-foreground hover:bg-muted hover:text-primary transition h-[50px] flex items-center justify-center">
                         <Paperclip size={20} />
                         <input type="file" onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
                     </label>
-
                     {isRecording ? (
                         <div className="flex-grow bg-red-500/10 text-red-500 p-3 rounded-xl flex items-center justify-between h-[50px] animate-pulse border border-red-500/20">
                             <span className="font-bold text-sm">Запись...</span>
@@ -392,7 +377,6 @@ export default function ChatPage() {
                             rows={1}
                         />
                     )}
-
                     {newMessage.trim() || file ? (
                         <button onClick={() => sendMessage()} className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg shadow-primary/20 h-[50px] aspect-square flex items-center justify-center">
                             <Send size={20} />
