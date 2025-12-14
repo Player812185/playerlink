@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/utils/supabase'
 import Link from 'next/link'
-import { ArrowLeft, User } from 'lucide-react'
+import { ArrowLeft, Bell } from 'lucide-react'
 
 export default function MessagesList() {
     const [conversations, setConversations] = useState<any[]>([])
@@ -49,13 +49,35 @@ export default function MessagesList() {
         setLoading(false)
     }
 
+    const requestPermission = () => {
+        Notification.requestPermission().then((permission) => {
+            if (permission === 'granted') {
+                alert('Уведомления включены! 🎉')
+                new Notification('Проверка связи', { body: 'Теперь вы не пропустите сообщения' })
+            } else {
+                alert('Вы запретили уведомления в настройках браузера.')
+            }
+        })
+    }
+
     return (
         <div className="min-h-screen bg-background text-foreground p-4 max-w-xl mx-auto">
-            <div className="flex items-center gap-4 mb-6">
-                <Link href="/" className="text-muted-foreground hover:text-foreground">
-                    <ArrowLeft />
-                </Link>
-                <h1 className="text-2xl font-bold">Сообщения</h1>
+            <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-4">
+                    <Link href="/" className="text-muted-foreground hover:text-foreground">
+                        <ArrowLeft />
+                    </Link>
+                    <h1 className="text-2xl font-bold">Сообщения</h1>
+                </div>
+
+                {/* КНОПКА РАЗРЕШЕНИЯ */}
+                <button
+                    onClick={requestPermission}
+                    className="p-2 bg-muted rounded-full hover:text-primary transition"
+                    title="Включить уведомления"
+                >
+                    <Bell size={20} />
+                </button>
             </div>
 
             <div className="space-y-2">

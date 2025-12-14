@@ -32,9 +32,6 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
 
             const decodedUsername = decodeURIComponent(username)
 
-            // --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-            // 1. Ищем строго по колонке username.
-            // .ilike игнорирует регистр (найдет User, даже если ищем user)
             const { data: profileData, error } = await supabase
                 .from('profiles')
                 .select('*')
@@ -42,8 +39,6 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                 .single()
 
             if (error || !profileData) {
-                // Fallback: Если по нику не нашли, проверяем, вдруг это старая ссылка по ID (UUID)
-                // UUID имеет формат 8-4-4-4-12 символов
                 const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(decodedUsername)
 
                 if (isUUID) {
@@ -55,7 +50,6 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
 
                     if (byId) {
                         setProfile(byId)
-                        // Если нашли по ID, лучше сразу перекинуть на красивый URL с ником
                         if (byId.username) {
                             router.replace(`/u/${byId.username}`)
                         }
@@ -73,11 +67,9 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                 setProfile(profileData)
             }
 
-            // Важно: используем ID найденного профиля для дальнейших запросов
             const targetId = profileData?.id || profile?.id
             if (!targetId) return
 
-            // 2. Посты
             const { data: postsData } = await supabase
                 .from('posts')
                 .select('*, likes(count), comments(count)')
@@ -85,7 +77,6 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                 .order('created_at', { ascending: false })
             setPosts(postsData || [])
 
-            // 3. Подписки/Подписчики
             const { count: followers } = await supabase
                 .from('followers')
                 .select('*', { count: 'exact', head: true })
@@ -98,7 +89,6 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                 .eq('follower_id', targetId)
             setFollowingCount(following || 0)
 
-            // 4. Статус подписки
             if (user && user.id !== targetId) {
                 const { data } = await supabase
                     .from('followers')
