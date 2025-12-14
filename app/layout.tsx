@@ -6,6 +6,13 @@ import { NotificationListener } from "@/components/NotificationListener"; // <--
 export const metadata: Metadata = {
   title: "Playerlink",
   description: "Social Platform",
+  manifest: "/manifest.json", // <--- Добавили ссылку
+  themeColor: "#0b0e14",      // <--- Цвет "шапки" браузера на мобильном
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Playerlink",
+  },
 };
 
 export default function RootLayout({

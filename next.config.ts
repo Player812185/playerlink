@@ -1,5 +1,17 @@
 import type { NextConfig } from "next";
 
+const withPWA = require("@ducanh2912/next-pwa").default({
+  dest: "public", // Куда класть service worker
+  cacheOnFrontEndNav: true,
+  aggressiveFrontEndNavCaching: true,
+  reloadOnOnline: true,
+  swcMinify: true,
+  disable: process.env.NODE_ENV === "development", // Отключаем PWA на локалке (чтобы не кэшировало ошибки)
+  workboxOptions: {
+    disableDevLogs: true,
+  },
+});
+
 const nextConfig: NextConfig = {
   // Разрешаем загрузку картинок с домена Supabase
   images: {
@@ -33,4 +45,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withPWA(nextConfig);
