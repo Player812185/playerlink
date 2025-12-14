@@ -25,7 +25,7 @@ export async function POST(request: Request) {
             contents: { en: message },
             headings: { en: `Новое сообщение от ${senderName}` },
             // Ссылка должна вести на продакшн, если мы не на локалке
-            url: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/messages`
+            url: 'https://www.playerlink.fun/messages'
         })
     }
 

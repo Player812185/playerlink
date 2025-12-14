@@ -26,6 +26,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     const [newMessage, setNewMessage] = useState('')
     const [currentUser, setCurrentUser] = useState<any>(null)
     const [partnerProfile, setPartnerProfile] = useState<any>(null)
+    const [myProfile, setMyProfile] = useState<any>(null)
 
     // Файлы
     const [file, setFile] = useState<File | null>(null)
@@ -50,6 +51,14 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
         setCurrentUser(user)
+
+        // 1. Загружаем МОЙ профиль (чтобы знать мой username для пуша)
+        const { data: myProf } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+        setMyProfile(myProf) // <--- СОХРАНЯЕМ
 
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', partnerId).single()
         setPartnerProfile(profile)
@@ -206,7 +215,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
                 body: JSON.stringify({
                     receiverId: partnerId,
                     message: newMessage || (file ? 'Отправил файл' : 'Сообщение'),
-                    senderName: currentUser.user_metadata?.full_name || currentUser.email || 'Пользователь'
+                    senderName: myProfile?.username || 'Пользователь'
                 })
             })
         }
