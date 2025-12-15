@@ -49,6 +49,7 @@ export default function ChatPage() {
 
     const [editingMessage, setEditingMessage] = useState<Message | null>(null)
     const [editingText, setEditingText] = useState('')
+    const [isDragOver, setIsDragOver] = useState(false)
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
@@ -149,7 +150,7 @@ export default function ChatPage() {
 
     useEffect(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }, [messages, replyTo, filePreview, isRecording, isTyping])
+    }, [messages, replyTo, filePreviews, isRecording, isTyping])
 
     // Периодическое обновление статуса (каждые 30 сек пересчитываем "минуты назад")
     useEffect(() => {
@@ -355,8 +356,38 @@ export default function ChatPage() {
         return `Был(а) ${d.toLocaleDateString()} в ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     }
 
+    const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setIsDragOver(false)
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            processFiles(e.dataTransfer.files)
+        }
+    }
+
+    const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!isDragOver) setIsDragOver(true)
+    }
+
+    const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+        // Игнорируем leave при переходе между внутренними элементами
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return
+        setIsDragOver(false)
+    }
+
     return (
-        <div className="flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border">
+        <div
+            className={`flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border ${
+                isDragOver ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''
+            }`}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+        >
             <div className="flex items-center gap-4 p-4 border-b border-border bg-card shadow-sm z-10">
                 <Link href="/messages" className="text-muted-foreground hover:text-foreground"><ArrowLeft /></Link>
                 {partnerProfile ? (
@@ -511,17 +542,29 @@ export default function ChatPage() {
                             >
                                 Отмена
                             </button>
-                            <button
-                                onClick={saveEdit}
-                                className="bg-primary text-primary-foreground px-4 py-2 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] flex items-center justify-center text-sm font-semibold"
-                            >
-                                Сохранить
-                            </button>
-                        </div>
-                    ) : newMessage.trim() || file ? (
-                        <button onClick={() => sendMessage()} className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] aspect-square flex items-center justify-center"><Send size={20} /></button>
+                        <button
+                            onClick={saveEdit}
+                            className="bg-primary text-primary-foreground px-4 py-2 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] flex items-center justify-center text-sm font-semibold"
+                        >
+                            Сохранить
+                        </button>
+                    </div>
+                    ) : newMessage.trim() || files.length > 0 ? (
+                        <button
+                            onClick={() => sendMessage()}
+                            className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] aspect-square flex items-center justify-center"
+                        >
+                            <Send size={20} />
+                        </button>
                     ) : (
-                        <button onClick={isRecording ? stopRecording : startRecording} className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'}`}>{isRecording ? <Send size={20} /> : <Mic size={20} />}</button>
+                        <button
+                            onClick={isRecording ? stopRecording : startRecording}
+                            className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${
+                                isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'
+                            }`}
+                        >
+                            {isRecording ? <Send size={20} /> : <Mic size={20} />}
+                        </button>
                     )}
                 </div>
             </div>
