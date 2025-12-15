@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
 import { NotificationListener } from "@/components/NotificationListener";
-import OneSignalInit from '@/components/OneSignalInit'
-import OnlinePresence from '@/components/OnlinePresence'
+import OneSignalInit from '@/components/OneSignalInit';
+import OnlineHeartbeat from '@/components/OnlineHeartbeat' 
 
 export const metadata: Metadata = {
   title: "Playerlink",
@@ -28,7 +28,7 @@ export default function RootLayout({
         <Providers>
           <NotificationListener />
           <OneSignalInit />
-          <OnlinePresence />
+          <OnlineHeartbeat />
           {children}
         </Providers>
       </body>

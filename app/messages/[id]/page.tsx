@@ -4,8 +4,8 @@ import { supabase } from '@/utils/supabase'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck } from 'lucide-react'
-import { RealtimeChannel } from '@supabase/supabase-js'
 
+// Типы
 type Message = {
     id: string
     content: string
@@ -17,32 +17,39 @@ type Message = {
     is_read: boolean
 }
 
+// Хелпер: проверка "В сети ли юзер?" (если пинг был меньше 1 минуты назад)
+const checkIsOnline = (lastSeen: string | null) => {
+    if (!lastSeen) return false
+    const diff = new Date().getTime() - new Date(lastSeen).getTime()
+    return diff < 60000 // 1 минута
+}
+
 export default function ChatPage() {
     const { id: partnerId } = useParams()
-    const [messages, setMessages] = useState<Message[]>([])
-    const [newMessage, setNewMessage] = useState('')
 
-    const [currentUser, setCurrentUser] = useState<any>(null)
+    // Данные
+    const [messages, setMessages] = useState<Message[]>([])
     const [partnerProfile, setPartnerProfile] = useState<any>(null)
+    const [currentUser, setCurrentUser] = useState<any>(null)
     const [myProfile, setMyProfile] = useState<any>(null)
 
+    // UI Состояния
+    const [newMessage, setNewMessage] = useState('')
     const [isPartnerOnline, setIsPartnerOnline] = useState(false)
     const [isTyping, setIsTyping] = useState(false)
-
-    const channelRef = useRef<RealtimeChannel | null>(null)
-    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
     const [file, setFile] = useState<File | null>(null)
     const [filePreview, setFilePreview] = useState<string | null>(null)
     const [replyTo, setReplyTo] = useState<Message | null>(null)
     const [isRecording, setIsRecording] = useState(false)
 
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-    const audioChunksRef = useRef<Blob[]>([])
+    // Refs
     const scrollRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+    const audioChunksRef = useRef<Blob[]>([])
 
-    // Функция создания ID комнаты (гарантирует одинаковое название для обоих юзеров)
+    // Генератор комнаты для сигналов "Печатает"
     const getRoomId = (userId1: string, userId2: string) => {
         return [userId1, userId2].sort().join('-')
     }
@@ -53,28 +60,27 @@ export default function ChatPage() {
             if (!user) return
             setCurrentUser(user)
 
+            // Загрузка профилей
             const { data: myProf } = await supabase.from('profiles').select('*').eq('id', user.id).single()
             setMyProfile(myProf)
 
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', partnerId).single()
             setPartnerProfile(profile)
+            setIsPartnerOnline(checkIsOnline(profile?.last_seen))
 
+            // Загрузка сообщений
             fetchMessages(user.id)
             markMessagesAsRead(user.id)
 
-            // --- 1. КАНАЛ ЧАТА (Сообщения + Печатает) ---
-            const roomId = getRoomId(user.id, partnerId as string)
-            console.log("Подключение к комнате чата:", roomId)
-
-            channelRef.current = supabase.channel(`chat:${roomId}`, {
-                config: { broadcast: { self: false } }
-            })
-
-            channelRef.current
+            // --- ПОДПИСКА 1: СООБЩЕНИЯ И ПРОФИЛЬ ПАРТНЕРА ---
+            // Слушаем изменения в таблице profiles, чтобы обновлять статус онлайн в реальном времени
+            const dbChannel = supabase.channel(`db-changes:${partnerId}`)
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
+                    // Новое сообщение
                     if (payload.eventType === 'INSERT') {
                         const msg = payload.new as Message
-                        if ((msg.sender_id === partnerId) || (msg.sender_id === user.id)) {
+                        if ((msg.sender_id === partnerId && msg.receiver_id === user.id) ||
+                            (msg.sender_id === user.id && msg.receiver_id === partnerId)) {
                             setMessages((prev) => [...prev, msg])
                             if (msg.sender_id === partnerId) {
                                 markMessagesAsRead(user.id)
@@ -82,58 +88,54 @@ export default function ChatPage() {
                             }
                         }
                     }
-                    if (payload.eventType === 'DELETE') {
-                        setMessages((prev) => prev.filter(m => m.id !== payload.old.id))
-                    }
-                    if (payload.eventType === 'UPDATE') {
-                        setMessages((prev) => prev.map(m => m.id === payload.new.id ? payload.new as Message : m))
-                    }
+                    // Удаление и Обновление
+                    if (payload.eventType === 'DELETE') setMessages(prev => prev.filter(m => m.id !== payload.old.id))
+                    if (payload.eventType === 'UPDATE') setMessages(prev => prev.map(m => m.id === payload.new.id ? payload.new as Message : m))
                 })
+                .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${partnerId}` }, (payload) => {
+                    // Партнер обновил last_seen (пришел пинг)
+                    const newProfile = payload.new
+                    setPartnerProfile(newProfile)
+                    setIsPartnerOnline(checkIsOnline(newProfile.last_seen))
+                })
+                .subscribe()
+
+            // --- ПОДПИСКА 2: СИГНАЛ "ПЕЧАТАЕТ" (BROADCAST) ---
+            const roomId = getRoomId(user.id, partnerId as string)
+            const typingChannel = supabase.channel(`typing:${roomId}`, { config: { broadcast: { self: false } } })
+
+            typingChannel
                 .on('broadcast', { event: 'typing' }, (payload) => {
-                    console.log("Получен сигнал typing от:", payload.payload.user_id)
                     if (payload.payload.user_id === partnerId) {
                         setIsTyping(true)
                         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
                         typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000)
                     }
                 })
-                .subscribe((status) => {
-                    if (status === 'SUBSCRIBED') console.log("Чат подключен успешно")
-                })
-
-            // --- 2. КАНАЛ ОНЛАЙНА (Слушаем глобальный канал) ---
-            // ВНИМАНИЕ: Имя должно совпадать с OnlinePresence.tsx
-            const globalPresence = supabase.channel('playerlink-presence')
-
-            globalPresence
-                .on('presence', { event: 'sync' }, () => {
-                    const state = globalPresence.presenceState()
-                    // Проверяем, есть ли партнер в списке
-                    let found = false
-                    for (const key in state) {
-                        const users = state[key] as any[]
-                        if (users.find(u => u.user_id === partnerId)) {
-                            found = true
-                            break
-                        }
-                    }
-                    console.log("Статус партнера:", found ? "Онлайн" : "Оффлайн")
-                    setIsPartnerOnline(found)
-                })
                 .subscribe()
 
             return () => {
-                if (channelRef.current) supabase.removeChannel(channelRef.current)
-                supabase.removeChannel(globalPresence)
+                supabase.removeChannel(dbChannel)
+                supabase.removeChannel(typingChannel)
             }
         }
 
         init()
     }, [partnerId])
 
+    // Скролл вниз
     useEffect(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }, [messages, replyTo, filePreview, isRecording, isTyping])
+
+    // Периодическая проверка офлайна (каждую минуту обновляем статус, вдруг юзер ушел и перестал пинговать)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (partnerProfile) setIsPartnerOnline(checkIsOnline(partnerProfile.last_seen))
+        }, 30000)
+        return () => clearInterval(interval)
+    }, [partnerProfile])
+
 
     const fetchMessages = async (myId: string) => {
         const { data } = await supabase
@@ -148,10 +150,14 @@ export default function ChatPage() {
         await supabase.from('messages').update({ is_read: true }).eq('sender_id', partnerId).eq('receiver_id', myId).eq('is_read', false)
     }
 
+    // --- ОТПРАВКА СИГНАЛА ПЕЧАТАЕТ ---
     const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setNewMessage(e.target.value)
-        if (currentUser && channelRef.current) {
-            channelRef.current.send({
+        if (currentUser) {
+            const roomId = getRoomId(currentUser.id, partnerId as string)
+            const channel = supabase.channel(`typing:${roomId}`) // Подключаемся к тому же каналу
+            // Просто шлем, не подписываемся заново (Supabase позволяет слать в канал по имени)
+            channel.send({
                 type: 'broadcast',
                 event: 'typing',
                 payload: { user_id: currentUser.id }
@@ -159,108 +165,62 @@ export default function ChatPage() {
         }
     }
 
+    // --- ФАЙЛЫ / АУДИО / ОТПРАВКА (Код стандартный) ---
     const processFile = (f: File) => {
         setFile(f)
         if (f.type.startsWith('image/')) setFilePreview(URL.createObjectURL(f))
         else setFilePreview(null)
     }
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => { if (e.target.files?.[0]) processFile(e.target.files[0]) }
+    const handlePaste = (e: React.ClipboardEvent) => { if (e.clipboardData.files?.[0]) { e.preventDefault(); processFile(e.clipboardData.files[0]) } }
 
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) processFile(e.target.files[0])
-    }
-
-    const handlePaste = (e: React.ClipboardEvent) => {
-        if (e.clipboardData.files.length > 0) {
-            e.preventDefault()
-            processFile(e.clipboardData.files[0])
-        }
-    }
-
-    // --- ГОЛОСОВЫЕ (ИСПРАВЛЕНО) ---
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
             const mediaRecorder = new MediaRecorder(stream)
             mediaRecorderRef.current = mediaRecorder
             audioChunksRef.current = []
-
-            // Собираем данные по кусочкам
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    audioChunksRef.current.push(event.data)
-                }
-            }
-
-            // Самое важное: логика отправки срабатывает ТОЛЬКО после полной остановки
+            mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data) }
             mediaRecorder.onstop = async () => {
-                // Собираем все куски в один файл
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-
-                // Проверка: если файл пустой - не отправляем
-                if (audioBlob.size === 0) {
-                    console.error("Ошибка: Пустое аудио")
-                    return
+                if (audioBlob.size > 0) {
+                    const audioFile = new File([audioBlob], 'voice.webm', { type: 'audio/webm' })
+                    await sendMessage(audioFile, 'audio')
                 }
-
-                const audioFile = new File([audioBlob], 'voice-message.webm', { type: 'audio/webm' })
-                await sendMessage(audioFile, 'audio')
-
-                // Выключаем микрофон (убираем красную точку в браузере)
-                stream.getTracks().forEach(track => track.stop())
+                stream.getTracks().forEach(t => t.stop())
             }
-
             mediaRecorder.start()
             setIsRecording(true)
-        } catch (err) {
-            console.error(err)
-            alert('Микрофон недоступен. Разрешите доступ в настройках браузера.')
-        }
+        } catch { alert('Микрофон недоступен') }
     }
-
-    const stopRecording = () => {
-        if (mediaRecorderRef.current && isRecording) {
-            // Важно: Сначала останавливаем рекордер. 
-            // Это вызовет событие 'onstop', где и произойдет отправка.
-            mediaRecorderRef.current.stop()
-            setIsRecording(false)
-        }
-    }
+    const stopRecording = () => { mediaRecorderRef.current?.stop(); setIsRecording(false) }
 
     const sendMessage = async (overrideFile?: File, type: 'text' | 'audio' = 'text') => {
         const fileToSend = overrideFile || file
         const textToSend = type === 'audio' ? '' : newMessage
         if ((!textToSend.trim() && !fileToSend) || !currentUser) return
+
         let uploadedUrl = null
         if (fileToSend) {
-            const fileExt = fileToSend.name.split('.').pop()
-            const fileName = `${currentUser.id}-${Date.now()}.${fileExt}`
-            const { error } = await supabase.storage.from('chat-attachments').upload(fileName, fileToSend)
-            if (!error) {
-                const { data } = supabase.storage.from('chat-attachments').getPublicUrl(fileName)
-                uploadedUrl = data.publicUrl
-            }
+            const ext = fileToSend.name.split('.').pop()
+            const path = `${currentUser.id}-${Date.now()}.${ext}`
+            const { error } = await supabase.storage.from('chat-attachments').upload(path, fileToSend)
+            if (!error) uploadedUrl = supabase.storage.from('chat-attachments').getPublicUrl(path).data.publicUrl
         }
+
         const { error } = await supabase.from('messages').insert({
             sender_id: currentUser.id, receiver_id: partnerId, content: textToSend, file_url: uploadedUrl, reply_to_id: replyTo?.id || null
         })
+
         if (!error && type !== 'audio') {
-            fetch('/api/send-push', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ receiverId: partnerId, message: fileToSend ? (type === 'audio' ? 'Голосовое сообщение 🎤' : 'Отправил файл 📎') : textToSend, senderName: myProfile?.username || 'Пользователь' })
-            })
+            fetch('/api/send-push', { method: 'POST', body: JSON.stringify({ receiverId: partnerId, message: fileToSend ? (type === 'audio' ? 'Голосовое' : 'Файл') : textToSend, senderName: myProfile?.username }) })
         }
         setNewMessage(''); setFile(null); setFilePreview(null); setReplyTo(null)
-        if (fileInputRef.current) fileInputRef.current.value = ''
     }
 
     const deleteMessage = async (msg: Message) => {
         if (!confirm('Удалить?')) return
-        if (msg.file_url) {
-            try {
-                const fileName = msg.file_url.split('/').pop()
-                if (fileName) await supabase.storage.from('chat-attachments').remove([fileName])
-            } catch (e) { }
-        }
+        if (msg.file_url) await supabase.storage.from('chat-attachments').remove([msg.file_url.split('/').pop()!])
         await supabase.from('messages').delete().eq('id', msg.id)
     }
 
@@ -268,11 +228,8 @@ export default function ChatPage() {
         if (isPartnerOnline) return 'В сети'
         if (isTyping) return 'Печатает...'
         if (!partnerProfile?.last_seen) return 'Оффлайн'
-        const date = new Date(partnerProfile.last_seen)
-        const now = new Date()
-        const diff = (now.getTime() - date.getTime()) / 1000 / 60
-        if (diff < 2) return 'Был(а) только что'
-        return `Был(а) ${date.toLocaleDateString()} в ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        const d = new Date(partnerProfile.last_seen)
+        return `Был(а) ${d.toLocaleDateString()} в ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     }
 
     return (
@@ -283,7 +240,7 @@ export default function ChatPage() {
                     <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition">
                         <div className="relative">
                             <img src={partnerProfile.avatar_url || '/placeholder.png'} className="w-10 h-10 rounded-full object-cover" />
-                            {isPartnerOnline && <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full animate-pulse"></span>}
+                            {isPartnerOnline && <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full"></span>}
                         </div>
                         <div className="flex flex-col">
                             <span className="font-bold leading-none">{partnerProfile.username}</span>
@@ -295,38 +252,20 @@ export default function ChatPage() {
                 ) : <span>Загрузка...</span>}
             </div>
 
-            {/* ОСТАЛЬНОЙ РЕНДЕР ОСТАЕТСЯ ПРЕЖНИМ */}
+            {/* СПИСОК СООБЩЕНИЙ */}
             <div className="flex-grow overflow-y-auto p-4 space-y-1 bg-background" ref={scrollRef}>
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
                     const replyMsg = messages.find(m => m.id === msg.reply_to_id)
-                    const isImage = msg.file_url && (msg.file_url.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null)
-                    const isAudio = msg.file_url && (msg.file_url.match(/\.(webm|mp3|wav|m4a)$/i) != null)
+                    const isImage = msg.file_url?.match(/\.(jpeg|jpg|gif|png|webp)$/i)
+                    const isAudio = msg.file_url?.match(/\.(webm|mp3|wav|m4a)$/i)
                     return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-4`}>
-                            <div className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border border-transparent ${isMe ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-muted text-foreground rounded-bl-none border-border'}`}>
-                                {replyMsg && (
-                                    <div className={`mb-2 text-xs border-l-2 pl-2 py-1 cursor-pointer opacity-80 ${isMe ? 'border-white/50' : 'border-primary'}`}>
-                                        <span className="font-bold block">{replyMsg.sender_id === currentUser?.id ? 'Вы' : partnerProfile?.username}</span>
-                                        <span className="truncate block max-w-[150px]">{replyMsg.file_url ? '[Вложение]' : replyMsg.content}</span>
-                                    </div>
-                                )}
-                                {msg.file_url && (
-                                    <div className="mb-2">
-                                        {isImage ? (
-                                            <a href={msg.file_url} target="_blank" rel="noreferrer"><img src={msg.file_url} className="rounded-lg max-w-full max-h-64 object-cover" /></a>
-                                        ) : isAudio ? (
-                                            <audio controls src={msg.file_url} className="max-w-[240px] h-10" />
-                                        ) : (
-                                            <a href={msg.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-black/10 p-2 rounded-lg hover:bg-black/20 transition"><FileText size={20} /> <span className="underline text-sm">Файл</span></a>
-                                        )}
-                                    </div>
-                                )}
+                            <div className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border ${isMe ? 'bg-primary text-primary-foreground rounded-br-none border-transparent' : 'bg-muted text-foreground rounded-bl-none border-border'}`}>
+                                {replyMsg && <div className={`mb-2 text-xs border-l-2 pl-2 py-1 opacity-80 ${isMe ? 'border-white/50' : 'border-primary'}`}><span className="font-bold block">{replyMsg.sender_id === currentUser?.id ? 'Вы' : partnerProfile?.username}</span><span className="truncate block max-w-[150px]">{replyMsg.file_url ? '[Вложение]' : replyMsg.content}</span></div>}
+                                {msg.file_url && <div className="mb-2">{isImage ? <a href={msg.file_url} target="_blank"><img src={msg.file_url} className="rounded-lg max-h-64 object-cover" /></a> : isAudio ? <audio controls src={msg.file_url} className="h-10 max-w-[200px]" /> : <a href={msg.file_url} target="_blank" className="flex items-center gap-2 bg-black/10 p-2 rounded"><FileText size={20} /> Файл</a>}</div>}
                                 {msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>}
-                                <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${isMe ? 'text-white/70' : 'text-muted-foreground'}`}>
-                                    <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                    {isMe && <span>{msg.is_read ? <CheckCheck size={14} /> : <Check size={14} />}</span>}
-                                </div>
+                                <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${isMe ? 'text-white/70' : 'text-muted-foreground'}`}><span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>{isMe && <span>{msg.is_read ? <CheckCheck size={14} /> : <Check size={14} />}</span>}</div>
                                 <div className={`absolute top-0 ${isMe ? '-left-16' : '-right-16'} h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
                                     <button onClick={() => setReplyTo(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"><Reply size={14} /></button>
                                     {isMe && <button onClick={() => deleteMessage(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-red-500 shadow-sm"><Trash2 size={14} /></button>}
@@ -337,17 +276,14 @@ export default function ChatPage() {
                 })}
             </div>
 
+            {/* ПАНЕЛЬ ВВОДА */}
             <div className="p-3 bg-card border-t border-border">
-                {replyTo && <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="text-sm border-l-2 border-primary pl-2"><span className="text-primary font-bold block">Ответ</span><span className="text-muted-foreground text-xs truncate max-w-[200px] block">{replyTo.content || '[Вложение]'}</span></div><button onClick={() => setReplyTo(null)}><X size={16} /></button></div>}
-                {file && <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="flex items-center gap-2">{filePreview ? <img src={filePreview} className="w-8 h-8 rounded object-cover" /> : <FileText className="text-primary" />}<span className="text-sm text-foreground truncate max-w-[200px]">{file.name}</span></div><button onClick={() => { setFile(null); setFilePreview(null) }}><X size={16} /></button></div>}
+                {replyTo && <div className="flex justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="text-sm border-l-2 border-primary pl-2"><span className="text-primary font-bold">Ответ</span><span className="text-muted-foreground text-xs block truncate max-w-[200px]">{replyTo.content || '[Вложение]'}</span></div><button onClick={() => setReplyTo(null)}><X size={16} /></button></div>}
+                {file && <div className="flex justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="flex gap-2 items-center">{filePreview ? <img src={filePreview} className="w-8 h-8 rounded" /> : <FileText />}<span className="text-sm truncate max-w-[200px]">{file.name}</span></div><button onClick={() => { setFile(null); setFilePreview(null) }}><X size={16} /></button></div>}
                 <div className="flex items-end gap-2">
                     <label className="p-3 rounded-xl cursor-pointer text-muted-foreground hover:bg-muted hover:text-primary transition h-[50px] flex items-center justify-center"><Paperclip size={20} /><input type="file" onChange={handleFileSelect} className="hidden" ref={fileInputRef} /></label>
-                    {isRecording ? (
-                        <div className="flex-grow bg-red-500/10 text-red-500 p-3 rounded-xl flex items-center justify-between h-[50px] animate-pulse border border-red-500/20"><span className="font-bold text-sm">Запись...</span><button onClick={stopRecording} className="bg-red-500 text-white p-1.5 rounded-full"><Square size={14} /></button></div>
-                    ) : (
-                        <textarea value={newMessage} onChange={handleTyping} onPaste={handlePaste} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Сообщение..." className="flex-grow bg-muted text-foreground p-3 rounded-xl focus:outline-none focus:border-primary border border-transparent transition placeholder-muted-foreground resize-none min-h-[50px] max-h-[120px]" rows={1} />
-                    )}
-                    {newMessage.trim() || file ? <button onClick={() => sendMessage()} className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg shadow-primary/20 h-[50px] aspect-square flex items-center justify-center"><Send size={20} /></button> : <button onClick={isRecording ? stopRecording : startRecording} className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'}`}>{isRecording ? <Send size={20} /> : <Mic size={20} />}</button>}
+                    {isRecording ? <div className="flex-grow bg-red-500/10 text-red-500 p-3 rounded-xl flex justify-between items-center h-[50px] animate-pulse border border-red-500/20"><span className="font-bold text-sm">Запись...</span><button onClick={stopRecording} className="bg-red-500 text-white p-1.5 rounded-full"><Square size={14} /></button></div> : <textarea value={newMessage} onChange={handleTyping} onPaste={handlePaste} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }} placeholder="Сообщение..." className="flex-grow bg-muted text-foreground p-3 rounded-xl focus:outline-none focus:border-primary border border-transparent transition placeholder-muted-foreground resize-none min-h-[50px] max-h-[120px]" rows={1} />}
+                    {newMessage.trim() || file ? <button onClick={() => sendMessage()} className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] aspect-square flex items-center justify-center"><Send size={20} /></button> : <button onClick={isRecording ? stopRecording : startRecording} className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'}`}>{isRecording ? <Send size={20} /> : <Mic size={20} />}</button>}
                 </div>
             </div>
         </div>
