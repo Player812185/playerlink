@@ -10,6 +10,7 @@ type Message = {
     id: string
     content: string
     file_url: string | null
+    file_urls?: string[] | null
     reply_to_id: string | null
     sender_id: string
     receiver_id: string
@@ -41,8 +42,8 @@ export default function ChatPage() {
     const channelRef = useRef<RealtimeChannel | null>(null)
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-    const [file, setFile] = useState<File | null>(null)
-    const [filePreview, setFilePreview] = useState<string | null>(null)
+    const [files, setFiles] = useState<File[]>([])
+    const [filePreviews, setFilePreviews] = useState<string[]>([])
     const [replyTo, setReplyTo] = useState<Message | null>(null)
     const [isRecording, setIsRecording] = useState(false)
 
@@ -188,13 +189,26 @@ export default function ChatPage() {
         }
     }
 
-    const processFile = (f: File) => {
-        setFile(f)
-        if (f.type.startsWith('image/')) setFilePreview(URL.createObjectURL(f))
-        else setFilePreview(null)
+    const processFiles = (newFiles: FileList | File[]) => {
+        const arr = Array.from(newFiles)
+        setFiles(prev => [...prev, ...arr])
+        setFilePreviews(prev => [
+            ...prev,
+            ...arr.map(f => (f.type.startsWith('image/') ? URL.createObjectURL(f) : '')),
+        ])
     }
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => { if (e.target.files?.[0]) processFile(e.target.files[0]) }
-    const handlePaste = (e: React.ClipboardEvent) => { if (e.clipboardData.files?.[0]) { e.preventDefault(); processFile(e.clipboardData.files[0]) } }
+
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.length) return
+        processFiles(e.target.files)
+    }
+
+    const handlePaste = (e: React.ClipboardEvent) => {
+        if (e.clipboardData.files?.length) {
+            e.preventDefault()
+            processFiles(e.clipboardData.files)
+        }
+    }
 
     const startRecording = async () => {
         try {
@@ -222,8 +236,8 @@ export default function ChatPage() {
         setEditingMessage(msg)
         setEditingText(msg.content)
         setReplyTo(null)
-        setFile(null)
-        setFilePreview(null)
+        setFiles([])
+        setFilePreviews([])
     }
 
     const cancelEdit = () => {
@@ -259,32 +273,77 @@ export default function ChatPage() {
     }
 
     const sendMessage = async (overrideFile?: File, type: 'text' | 'audio' = 'text') => {
-        const fileToSend = overrideFile || file
+        const fileToSend = overrideFile || files[0]
         const textToSend = type === 'audio' ? '' : newMessage
-        if ((!textToSend.trim() && !fileToSend) || !currentUser) return
+        const hasAnyFiles = overrideFile ? true : files.length > 0
+        if ((!textToSend.trim() && !hasAnyFiles) || !currentUser) return
 
-        let uploadedUrl = null
-        if (fileToSend) {
-            const ext = fileToSend.name.split('.').pop()
+        let uploadedUrl: string | null = null
+        let uploadedUrls: string[] = []
+
+        if (overrideFile) {
+            const ext = overrideFile.name.split('.').pop()
             const path = `${currentUser.id}-${Date.now()}.${ext}`
-            const { error } = await supabase.storage.from('chat-attachments').upload(path, fileToSend)
-            if (!error) uploadedUrl = supabase.storage.from('chat-attachments').getPublicUrl(path).data.publicUrl
+            const { error } = await supabase.storage.from('chat-attachments').upload(path, overrideFile)
+            if (!error) {
+                const { data } = supabase.storage.from('chat-attachments').getPublicUrl(path)
+                uploadedUrl = data.publicUrl
+                uploadedUrls = [data.publicUrl]
+            }
+        } else if (files.length > 0) {
+            for (const f of files) {
+                const ext = f.name.split('.').pop()
+                const path = `${currentUser.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+                const { error } = await supabase.storage.from('chat-attachments').upload(path, f)
+                if (!error) {
+                    const { data } = supabase.storage.from('chat-attachments').getPublicUrl(path)
+                    uploadedUrls.push(data.publicUrl)
+                }
+            }
+            uploadedUrl = uploadedUrls[0] || null
         }
 
         const { error } = await supabase.from('messages').insert({
-            sender_id: currentUser.id, receiver_id: partnerId, content: textToSend, file_url: uploadedUrl, reply_to_id: replyTo?.id || null
+            sender_id: currentUser.id,
+            receiver_id: partnerId,
+            content: textToSend,
+            file_url: uploadedUrl,
+            file_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
+            reply_to_id: replyTo?.id || null
         })
 
         if (!error && type !== 'audio') {
-            fetch('/api/send-push', { method: 'POST', body: JSON.stringify({ receiverId: partnerId, message: fileToSend ? (type === 'audio' ? 'Голосовое' : 'Файл') : textToSend, senderName: myProfile?.username }) })
+            const hasFiles = overrideFile ? true : files.length > 0
+            fetch('/api/send-push', {
+                method: 'POST',
+                body: JSON.stringify({
+                    receiverId: partnerId,
+                    message: hasFiles ? (type === 'audio' ? 'Голосовое' : 'Файл') : textToSend,
+                    senderName: myProfile?.username
+                })
+            })
         }
-        setNewMessage(''); setFile(null); setFilePreview(null); setReplyTo(null)
+        setNewMessage('')
+        setFiles([])
+        setFilePreviews([])
+        setReplyTo(null)
         if (fileInputRef.current) fileInputRef.current.value = ''
     }
 
     const deleteMessage = async (msg: Message) => {
         if (!confirm('Удалить?')) return
-        if (msg.file_url) await supabase.storage.from('chat-attachments').remove([msg.file_url.split('/').pop()!])
+        const urls = (msg.file_urls && msg.file_urls.length > 0)
+            ? msg.file_urls
+            : (msg.file_url ? [msg.file_url] : [])
+
+        if (urls.length) {
+            const paths = urls
+                .map(u => u.split('/').pop()!)
+                .filter(Boolean)
+            if (paths.length) {
+                await supabase.storage.from('chat-attachments').remove(paths)
+            }
+        }
         await supabase.from('messages').delete().eq('id', msg.id)
     }
 
@@ -320,14 +379,53 @@ export default function ChatPage() {
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
                     const replyMsg = messages.find(m => m.id === msg.reply_to_id)
-                    const isImage = msg.file_url?.match(/\.(jpeg|jpg|gif|png|webp)$/i)
-                    const isAudio = msg.file_url?.match(/\.(webm|mp3|wav|m4a)$/i)
+                    const allUrls = (msg.file_urls && msg.file_urls.length > 0)
+                        ? msg.file_urls
+                        : (msg.file_url ? [msg.file_url] : [])
                     const isEdited = msg.updated_at && msg.updated_at !== msg.created_at
                     return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-4`}>
                             <div className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border ${isMe ? 'bg-primary text-primary-foreground rounded-br-none border-transparent' : 'bg-muted text-foreground rounded-bl-none border-border'}`}>
-                                {replyMsg && <div className={`mb-2 text-xs border-l-2 pl-2 py-1 opacity-80 ${isMe ? 'border-white/50' : 'border-primary'}`}><span className="font-bold block">{replyMsg.sender_id === currentUser?.id ? 'Вы' : partnerProfile?.username}</span><span className="truncate block max-w-[150px]">{replyMsg.file_url ? '[Вложение]' : replyMsg.content}</span></div>}
-                                {msg.file_url && <div className="mb-2">{isImage ? <a href={msg.file_url} target="_blank"><img src={msg.file_url} className="rounded-lg max-h-64 object-cover" /></a> : isAudio ? <audio controls src={msg.file_url} className="h-10 max-w-[200px]" /> : <a href={msg.file_url} target="_blank" className="flex items-center gap-2 bg-black/10 p-2 rounded"><FileText size={20} /> Файл</a>}</div>}
+                                {replyMsg && (
+                                    <div className={`mb-2 text-xs border-l-2 pl-2 py-1 opacity-80 ${isMe ? 'border-white/50' : 'border-primary'}`}>
+                                        <span className="font-bold block">
+                                            {replyMsg.sender_id === currentUser?.id ? 'Вы' : partnerProfile?.username}
+                                        </span>
+                                        <span className="truncate block max-w-[150px]">
+                                            {(replyMsg.file_urls && replyMsg.file_urls.length > 0) || replyMsg.file_url
+                                                ? '[Вложение]'
+                                                : replyMsg.content}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {allUrls.length > 0 && (
+                                    <div className="mb-2 space-y-2">
+                                        {allUrls.map((url) => {
+                                            const isImage = url.match(/\.(jpeg|jpg|gif|png|webp)$/i)
+                                            const isAudio = url.match(/\.(webm|mp3|wav|m4a)$/i)
+                                            return (
+                                                <div key={url}>
+                                                    {isImage ? (
+                                                        <a href={url} target="_blank">
+                                                            <img src={url} className="rounded-lg max-h-64 object-cover" />
+                                                        </a>
+                                                    ) : isAudio ? (
+                                                        <audio controls src={url} className="h-10 max-w-[200px]" />
+                                                    ) : (
+                                                        <a
+                                                            href={url}
+                                                            target="_blank"
+                                                            className="flex items-center gap-2 bg-black/10 p-2 rounded"
+                                                        >
+                                                            <FileText size={20} /> Файл
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
                                 {msg.content && (
                                     <p className="whitespace-pre-wrap">
                                         {msg.content}
@@ -355,12 +453,35 @@ export default function ChatPage() {
 
             <div className="p-3 bg-card border-t border-border">
                 {replyTo && <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="text-sm border-l-2 border-primary pl-2"><span className="text-primary font-bold block">Ответ</span><span className="text-muted-foreground text-xs truncate max-w-[200px] block">{replyTo.content || '[Вложение]'}</span></div><button onClick={() => setReplyTo(null)}><X size={16} /></button></div>}
-                {file && <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="flex items-center gap-2">{filePreview ? <img src={filePreview} className="w-8 h-8 rounded object-cover" /> : <FileText className="text-primary" />}<span className="text-sm text-foreground truncate max-w-[200px]">{file.name}</span></div><button onClick={() => { setFile(null); setFilePreview(null) }}><X size={16} /></button></div>}
+                {files.length > 0 && (
+                    <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]">
+                        <div className="flex items-center gap-2 overflow-x-auto">
+                            {files.map((f, idx) => (
+                                <div key={idx} className="flex items-center gap-2 mr-2">
+                                    {filePreviews[idx] ? (
+                                        <img src={filePreviews[idx]} className="w-8 h-8 rounded object-cover" />
+                                    ) : (
+                                        <FileText className="text-primary" />
+                                    )}
+                                    <span className="text-sm text-foreground truncate max-w-[120px]">{f.name}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <button
+                            onClick={() => {
+                                setFiles([])
+                                setFilePreviews([])
+                            }}
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                )}
                 <div className="flex items-end gap-2">
                     {!editingMessage && (
                         <label className="p-3 rounded-xl cursor-pointer text-muted-foreground hover:bg-muted hover:text-primary transition h-[50px] flex items-center justify-center">
                             <Paperclip size={20} />
-                            <input type="file" onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
+                            <input type="file" multiple onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
                         </label>
                     )}
                     {isRecording && !editingMessage ? (

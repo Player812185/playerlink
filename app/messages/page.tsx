@@ -76,11 +76,21 @@ export default function MessagesList() {
 
                 const isUnreadForMe = !isFromMe && msg.receiver_id === user.id && !msg.is_read
 
+                const hasFile =
+                    (msg.file_urls && msg.file_urls.length > 0) ||
+                    !!msg.file_url
+
                 if (!map.has(partnerId)) {
                     map.set(partnerId, {
                         partner,
-                        lastMessage: msg.content || (msg.file_url ? (msg.file_url.match(/\.(webm|mp3|wav|m4a)$/i) ? 'Голосовое сообщение' : 'Файл') : null),
-                        lastHasFile: !!msg.file_url,
+                        lastMessage:
+                            msg.content ||
+                            (hasFile
+                                ? (msg.file_url && msg.file_url.match(/\.(webm|mp3|wav|m4a)$/i))
+                                    ? 'Голосовое сообщение'
+                                    : 'Файл'
+                                : null),
+                        lastHasFile: hasFile,
                         lastFromMe: isFromMe,
                         date: msg.created_at,
                         unreadCount: isUnreadForMe ? 1 : 0,
@@ -112,6 +122,34 @@ export default function MessagesList() {
 
     useEffect(() => {
         loadConversations()
+
+        let channel: any = null
+
+        const setupRealtime = async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) return
+
+            channel = supabase
+                .channel(`conversations:${user.id}`)
+                .on(
+                    'postgres_changes',
+                    { event: '*', schema: 'public', table: 'messages' },
+                    (payload) => {
+                        const msg: any = payload.new || payload.old
+                        if (!msg) return
+                        if (msg.sender_id === user.id || msg.receiver_id === user.id) {
+                            loadConversations()
+                        }
+                    }
+                )
+                .subscribe()
+        }
+
+        setupRealtime()
+
+        return () => {
+            if (channel) supabase.removeChannel(channel)
+        }
     }, [])
 
     return (
