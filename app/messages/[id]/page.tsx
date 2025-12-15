@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck } from 'lucide-react'
+import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3 } from 'lucide-react'
 import { RealtimeChannel } from '@supabase/supabase-js'
 
 type Message = {
@@ -14,6 +14,7 @@ type Message = {
     sender_id: string
     receiver_id: string
     created_at: string
+    updated_at?: string
     is_read: boolean
 }
 
@@ -44,6 +45,9 @@ export default function ChatPage() {
     const [filePreview, setFilePreview] = useState<string | null>(null)
     const [replyTo, setReplyTo] = useState<Message | null>(null)
     const [isRecording, setIsRecording] = useState(false)
+
+    const [editingMessage, setEditingMessage] = useState<Message | null>(null)
+    const [editingText, setEditingText] = useState('')
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
@@ -168,13 +172,19 @@ export default function ChatPage() {
     }
 
     const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        setNewMessage(e.target.value)
-        if (currentUser && channelRef.current) {
-            channelRef.current.send({
-                type: 'broadcast',
-                event: 'typing',
-                payload: { user_id: currentUser.id }
-            })
+        const value = e.target.value
+
+        if (editingMessage) {
+            setEditingText(value)
+        } else {
+            setNewMessage(value)
+            if (currentUser && channelRef.current) {
+                channelRef.current.send({
+                    type: 'broadcast',
+                    event: 'typing',
+                    payload: { user_id: currentUser.id }
+                })
+            }
         }
     }
 
@@ -206,6 +216,37 @@ export default function ChatPage() {
         } catch { alert('Микрофон недоступен') }
     }
     const stopRecording = () => { mediaRecorderRef.current?.stop(); setIsRecording(false) }
+
+    const startEditMessage = (msg: Message) => {
+        if (msg.file_url) return // Пока не редактируем сообщения с файлами/голосовыми
+        setEditingMessage(msg)
+        setEditingText(msg.content)
+        setReplyTo(null)
+        setFile(null)
+        setFilePreview(null)
+    }
+
+    const cancelEdit = () => {
+        setEditingMessage(null)
+        setEditingText('')
+    }
+
+    const saveEdit = async () => {
+        if (!editingMessage || !editingText.trim()) {
+            cancelEdit()
+            return
+        }
+
+        await supabase
+            .from('messages')
+            .update({ content: editingText })
+            .eq('id', editingMessage.id)
+
+        // Realtime обновит локальное состояние через UPDATE, но чтобы UI не мигал, сразу патчим локально
+        setMessages(prev => prev.map(m => m.id === editingMessage.id ? { ...m, content: editingText } : m))
+
+        cancelEdit()
+    }
 
     const sendMessage = async (overrideFile?: File, type: 'text' | 'audio' = 'text') => {
         const fileToSend = overrideFile || file
@@ -271,15 +312,29 @@ export default function ChatPage() {
                     const replyMsg = messages.find(m => m.id === msg.reply_to_id)
                     const isImage = msg.file_url?.match(/\.(jpeg|jpg|gif|png|webp)$/i)
                     const isAudio = msg.file_url?.match(/\.(webm|mp3|wav|m4a)$/i)
+                    const isEdited = msg.updated_at && msg.updated_at !== msg.created_at
                     return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-4`}>
                             <div className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border ${isMe ? 'bg-primary text-primary-foreground rounded-br-none border-transparent' : 'bg-muted text-foreground rounded-bl-none border-border'}`}>
                                 {replyMsg && <div className={`mb-2 text-xs border-l-2 pl-2 py-1 opacity-80 ${isMe ? 'border-white/50' : 'border-primary'}`}><span className="font-bold block">{replyMsg.sender_id === currentUser?.id ? 'Вы' : partnerProfile?.username}</span><span className="truncate block max-w-[150px]">{replyMsg.file_url ? '[Вложение]' : replyMsg.content}</span></div>}
                                 {msg.file_url && <div className="mb-2">{isImage ? <a href={msg.file_url} target="_blank"><img src={msg.file_url} className="rounded-lg max-h-64 object-cover" /></a> : isAudio ? <audio controls src={msg.file_url} className="h-10 max-w-[200px]" /> : <a href={msg.file_url} target="_blank" className="flex items-center gap-2 bg-black/10 p-2 rounded"><FileText size={20} /> Файл</a>}</div>}
-                                {msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>}
+                                {msg.content && (
+                                    <p className="whitespace-pre-wrap">
+                                        {msg.content}
+                                        {isEdited && <span className="ml-1 text-[10px] opacity-70">(изменено)</span>}
+                                    </p>
+                                )}
                                 <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${isMe ? 'text-white/70' : 'text-muted-foreground'}`}><span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>{isMe && <span>{msg.is_read ? <CheckCheck size={14} /> : <Check size={14} />}</span>}</div>
                                 <div className={`absolute top-0 ${isMe ? '-left-16' : '-right-16'} h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
                                     <button onClick={() => setReplyTo(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"><Reply size={14} /></button>
+                                    {isMe && !msg.file_url && (
+                                        <button
+                                            onClick={() => startEditMessage(msg)}
+                                            className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"
+                                        >
+                                            <Edit3 size={14} />
+                                        </button>
+                                    )}
                                     {isMe && <button onClick={() => deleteMessage(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-red-500 shadow-sm"><Trash2 size={14} /></button>}
                                 </div>
                             </div>
@@ -292,13 +347,51 @@ export default function ChatPage() {
                 {replyTo && <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="text-sm border-l-2 border-primary pl-2"><span className="text-primary font-bold block">Ответ</span><span className="text-muted-foreground text-xs truncate max-w-[200px] block">{replyTo.content || '[Вложение]'}</span></div><button onClick={() => setReplyTo(null)}><X size={16} /></button></div>}
                 {file && <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="flex items-center gap-2">{filePreview ? <img src={filePreview} className="w-8 h-8 rounded object-cover" /> : <FileText className="text-primary" />}<span className="text-sm text-foreground truncate max-w-[200px]">{file.name}</span></div><button onClick={() => { setFile(null); setFilePreview(null) }}><X size={16} /></button></div>}
                 <div className="flex items-end gap-2">
-                    <label className="p-3 rounded-xl cursor-pointer text-muted-foreground hover:bg-muted hover:text-primary transition h-[50px] flex items-center justify-center"><Paperclip size={20} /><input type="file" onChange={handleFileSelect} className="hidden" ref={fileInputRef} /></label>
-                    {isRecording ? (
+                    {!editingMessage && (
+                        <label className="p-3 rounded-xl cursor-pointer text-muted-foreground hover:bg-muted hover:text-primary transition h-[50px] flex items-center justify-center">
+                            <Paperclip size={20} />
+                            <input type="file" onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
+                        </label>
+                    )}
+                    {isRecording && !editingMessage ? (
                         <div className="flex-grow bg-red-500/10 text-red-500 p-3 rounded-xl flex items-center justify-between h-[50px] animate-pulse border border-red-500/20"><span className="font-bold text-sm">Запись...</span><button onClick={stopRecording} className="bg-red-500 text-white p-1.5 rounded-full"><Square size={14} /></button></div>
                     ) : (
-                        <textarea value={newMessage} onChange={handleTyping} onPaste={handlePaste} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Сообщение..." className="flex-grow bg-muted text-foreground p-3 rounded-xl focus:outline-none focus:border-primary border border-transparent transition placeholder-muted-foreground resize-none min-h-[50px] max-h-[120px]" rows={1} />
+                        <textarea
+                            value={editingMessage ? editingText : newMessage}
+                            onChange={handleTyping}
+                            onPaste={handlePaste}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault()
+                                    if (editingMessage) saveEdit()
+                                    else sendMessage()
+                                }
+                            }}
+                            placeholder={editingMessage ? 'Редактировать сообщение...' : 'Сообщение...'}
+                            className="flex-grow bg-muted text-foreground p-3 rounded-xl focus:outline-none focus:border-primary border border-transparent transition placeholder-muted-foreground resize-none min-h-[50px] max-h-[120px]"
+                            rows={1}
+                        />
                     )}
-                    {newMessage.trim() || file ? <button onClick={() => sendMessage()} className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] aspect-square flex items-center justify-center"><Send size={20} /></button> : <button onClick={isRecording ? stopRecording : startRecording} className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'}`}>{isRecording ? <Send size={20} /> : <Mic size={20} />}</button>}
+                    {editingMessage ? (
+                        <div className="flex gap-2">
+                            <button
+                                onClick={cancelEdit}
+                                className="px-3 py-2 rounded-xl bg-muted text-muted-foreground hover:bg-muted/80 h-[50px] flex items-center text-sm"
+                            >
+                                Отмена
+                            </button>
+                            <button
+                                onClick={saveEdit}
+                                className="bg-primary text-primary-foreground px-4 py-2 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] flex items-center justify-center text-sm font-semibold"
+                            >
+                                Сохранить
+                            </button>
+                        </div>
+                    ) : newMessage.trim() || file ? (
+                        <button onClick={() => sendMessage()} className="bg-primary text-primary-foreground p-3 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] aspect-square flex items-center justify-center"><Send size={20} /></button>
+                    ) : (
+                        <button onClick={isRecording ? stopRecording : startRecording} className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'}`}>{isRecording ? <Send size={20} /> : <Mic size={20} />}</button>
+                    )}
                 </div>
             </div>
         </div>
