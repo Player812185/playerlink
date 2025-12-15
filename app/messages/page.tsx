@@ -90,12 +90,15 @@ export default function MessagesList() {
                         ? decodeURIComponent(firstFileUrl.split('/').pop() || '')
                         : ''
 
+                    const isAudioFile =
+                        firstFileUrl && firstFileUrl.match(/\.(webm|mp3|wav|m4a)$/i)
+
                     map.set(partnerId, {
                         partner,
                         lastMessage:
                             msg.content ||
                             (hasFile
-                                ? (msg.file_url && msg.file_url.match(/\.(webm|mp3|wav|m4a)$/i))
+                                ? isAudioFile
                                     ? 'Голосовое сообщение'
                                     : fileName
                                 : null),

@@ -435,6 +435,7 @@ export default function ChatPage() {
                                         {allUrls.map((url) => {
                                             const isImage = url.match(/\.(jpeg|jpg|gif|png|webp)$/i)
                                             const isAudio = url.match(/\.(webm|mp3|wav|m4a)$/i)
+                                            const fileName = decodeURIComponent(url.split('/').pop() || '')
                                             return (
                                                 <div key={url}>
                                                     {isImage ? (
@@ -442,14 +443,22 @@ export default function ChatPage() {
                                                             <img src={url} className="rounded-lg max-h-64 object-cover" />
                                                         </a>
                                                     ) : isAudio ? (
-                                                        <audio controls src={url} className="h-10 max-w-[200px]" />
+                                                        <div className="flex flex-col gap-1">
+                                                            <audio controls src={url} className="h-10 max-w-[220px]" />
+                                                            <span className="text-[11px] text-white/80 truncate max-w-[220px]">
+                                                                {fileName || 'Голосовое сообщение'}
+                                                            </span>
+                                                        </div>
                                                     ) : (
                                                         <a
                                                             href={url}
                                                             target="_blank"
-                                                            className="flex items-center gap-2 bg-black/10 p-2 rounded"
+                                                            className="flex items-center gap-2 bg-black/10 p-2 rounded max-w-[220px]"
                                                         >
-                                                            <FileText size={20} /> Файл
+                                                            <FileText size={20} />
+                                                            <span className="text-xs truncate">
+                                                                {fileName || 'Файл'}
+                                                            </span>
                                                         </a>
                                                     )}
                                                 </div>
