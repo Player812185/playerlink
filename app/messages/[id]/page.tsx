@@ -236,14 +236,24 @@ export default function ChatPage() {
             cancelEdit()
             return
         }
+        if (!currentUser) return
 
-        await supabase
+        const { data, error } = await supabase
             .from('messages')
             .update({ content: editingText })
             .eq('id', editingMessage.id)
+            .eq('sender_id', currentUser.id)
+            .select('*')
+            .single()
 
-        // Realtime обновит локальное состояние через UPDATE, но чтобы UI не мигал, сразу патчим локально
-        setMessages(prev => prev.map(m => m.id === editingMessage.id ? { ...m, content: editingText } : m))
+        if (error) {
+            console.error('Ошибка обновления сообщения', error)
+            alert('Не удалось изменить сообщение (ограничения безопасности).')
+            return
+        }
+
+        // Обновляем локально подтверждённым значением из БД
+        setMessages(prev => prev.map(m => m.id === editingMessage.id ? { ...(m as Message), ...(data as Message) } : m))
 
         cancelEdit()
     }
