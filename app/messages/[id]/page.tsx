@@ -435,7 +435,8 @@ export default function ChatPage() {
                                         {allUrls.map((url) => {
                                             const isImage = url.match(/\.(jpeg|jpg|gif|png|webp)$/i)
                                             const isAudio = url.match(/\.(webm|mp3|wav|m4a)$/i)
-                                            const fileName = decodeURIComponent(url.split('/').pop() || '')
+                                            const ext = url.split('.').pop()?.toLowerCase()
+                                            const fileLabel = ext ? `Файл .${ext}` : 'Файл'
                                             return (
                                                 <div key={url}>
                                                     {isImage ? (
@@ -446,7 +447,7 @@ export default function ChatPage() {
                                                         <div className="flex flex-col gap-1">
                                                             <audio controls src={url} className="h-10 max-w-[220px]" />
                                                             <span className="text-[11px] text-white/80 truncate max-w-[220px]">
-                                                                {fileName || 'Голосовое сообщение'}
+                                                                Голосовое сообщение{ext ? ` (.${ext})` : ''}
                                                             </span>
                                                         </div>
                                                     ) : (
@@ -457,7 +458,7 @@ export default function ChatPage() {
                                                         >
                                                             <FileText size={20} />
                                                             <span className="text-xs truncate">
-                                                                {fileName || 'Файл'}
+                                                                {fileLabel}
                                                             </span>
                                                         </a>
                                                     )}

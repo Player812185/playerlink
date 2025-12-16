@@ -86,12 +86,14 @@ export default function MessagesList() {
                         msg.file_url ||
                         null
 
-                    const fileName = firstFileUrl
-                        ? decodeURIComponent(firstFileUrl.split('/').pop() || '')
+                    const ext = firstFileUrl
+                        ? firstFileUrl.split('.').pop()?.toLowerCase()
                         : ''
 
                     const isAudioFile =
                         firstFileUrl && firstFileUrl.match(/\.(webm|mp3|wav|m4a)$/i)
+
+                    const fileLabel = ext ? `Файл .${ext}` : 'Файл'
 
                     map.set(partnerId, {
                         partner,
@@ -100,7 +102,7 @@ export default function MessagesList() {
                             (hasFile
                                 ? isAudioFile
                                     ? 'Голосовое сообщение'
-                                    : fileName
+                                    : fileLabel
                                 : null),
                         lastHasFile: hasFile,
                         lastFromMe: isFromMe,
