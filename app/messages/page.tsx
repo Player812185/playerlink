@@ -86,6 +86,10 @@ export default function MessagesList() {
                         msg.file_url ||
                         null
 
+                    const firstFileName =
+                        (msg.file_names && msg.file_names[0]) ||
+                        null
+
                     const ext = firstFileUrl
                         ? firstFileUrl.split('.').pop()?.toLowerCase()
                         : ''
@@ -93,7 +97,11 @@ export default function MessagesList() {
                     const isAudioFile =
                         firstFileUrl && firstFileUrl.match(/\.(webm|mp3|wav|m4a)$/i)
 
-                    const fileLabel = ext ? `Файл .${ext}` : 'Файл'
+                    const fileLabel = firstFileName
+                        ? firstFileName
+                        : ext
+                            ? `Файл .${ext}`
+                            : 'Файл'
 
                     map.set(partnerId, {
                         partner,

@@ -11,6 +11,7 @@ type Message = {
     content: string
     file_url: string | null
     file_urls?: string[] | null
+    file_names?: string[] | null
     reply_to_id: string | null
     sender_id: string
     receiver_id: string
@@ -281,6 +282,7 @@ export default function ChatPage() {
 
         let uploadedUrl: string | null = null
         let uploadedUrls: string[] = []
+        let fileNames: string[] = []
 
         if (overrideFile) {
             const ext = overrideFile.name.split('.').pop()
@@ -290,6 +292,7 @@ export default function ChatPage() {
                 const { data } = supabase.storage.from('chat-attachments').getPublicUrl(path)
                 uploadedUrl = data.publicUrl
                 uploadedUrls = [data.publicUrl]
+                fileNames = [overrideFile.name]
             }
         } else if (files.length > 0) {
             for (const f of files) {
@@ -299,6 +302,7 @@ export default function ChatPage() {
                 if (!error) {
                     const { data } = supabase.storage.from('chat-attachments').getPublicUrl(path)
                     uploadedUrls.push(data.publicUrl)
+                    fileNames.push(f.name)
                 }
             }
             uploadedUrl = uploadedUrls[0] || null
@@ -310,6 +314,7 @@ export default function ChatPage() {
             content: textToSend,
             file_url: uploadedUrl,
             file_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
+            file_names: fileNames.length > 0 ? fileNames : null,
             reply_to_id: replyTo?.id || null
         })
 
@@ -319,7 +324,7 @@ export default function ChatPage() {
                 method: 'POST',
                 body: JSON.stringify({
                     receiverId: partnerId,
-                    message: hasFiles ? (type === 'audio' ? 'Голосовое' : 'Файл') : textToSend,
+                    message: hasFiles ? (hasAnyFiles ? 'Файл' : textToSend) : textToSend,
                     senderName: myProfile?.username
                 })
             })
@@ -413,6 +418,9 @@ export default function ChatPage() {
                     const allUrls = (msg.file_urls && msg.file_urls.length > 0)
                         ? msg.file_urls
                         : (msg.file_url ? [msg.file_url] : [])
+                    const allNames = (msg.file_names && msg.file_names.length === allUrls.length)
+                        ? msg.file_names
+                        : null
                     const isEdited = msg.updated_at && msg.updated_at !== msg.created_at
                     return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-4`}>
@@ -432,11 +440,16 @@ export default function ChatPage() {
 
                                 {allUrls.length > 0 && (
                                     <div className="mb-2 space-y-2">
-                                        {allUrls.map((url) => {
+                                        {allUrls.map((url, index) => {
                                             const isImage = url.match(/\.(jpeg|jpg|gif|png|webp)$/i)
                                             const isAudio = url.match(/\.(webm|mp3|wav|m4a)$/i)
                                             const ext = url.split('.').pop()?.toLowerCase()
-                                            const fileLabel = ext ? `Файл .${ext}` : 'Файл'
+                                            const originalName = allNames?.[index]
+                                            const fileLabel = originalName
+                                                ? originalName
+                                                : ext
+                                                    ? `Файл .${ext}`
+                                                    : 'Файл'
                                             return (
                                                 <div key={url}>
                                                     {isImage ? (
