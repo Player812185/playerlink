@@ -128,19 +128,25 @@ export default function ChatPage() {
                     // Новое сообщение
                     if (payload.eventType === 'INSERT') {
                         const msg = payload.new as Message
+
                         // Проверка: сообщение принадлежит этому чату
                         if ((msg.sender_id === partnerId && msg.receiver_id === user.id) ||
                             (msg.sender_id === user.id && msg.receiver_id === partnerId)) {
 
                             setMessages((prev) => {
-                                // Если сообщение уже есть (например, мы его добавили сами после ответа API), не дублируем
-                                if (prev.some(m => m.id === msg.id)) return prev
+                                // Ищем, есть ли уже сообщение с таким ID (наше оптимистичное)
+                                const exists = prev.find(m => m.id === msg.id)
+
+                                if (exists) {
+                                    // Если есть — обновляем его (убираем флаг isOptimistic, обновляем время от сервера)
+                                    return prev.map(m => m.id === msg.id ? { ...m, ...msg, isOptimistic: false } : m)
+                                }
+
+                                // Если нет — добавляем новое
                                 return [...prev, msg]
                             })
 
-                            setMessages((prev) => [...prev, msg])
-
-                            // Если сообщение от партнера - помечаем прочитанным и звук
+                            // Звук только для входящих
                             if (msg.sender_id === partnerId) {
                                 markMessagesAsRead(user.id)
                                 try { new Audio('/notify.mp3').play() } catch (e) { }
@@ -386,7 +392,7 @@ export default function ChatPage() {
         }
 
         const { error } = await supabase.from('messages').insert({
-            id: messageId, // <--- ВАЖНО: Мы форсируем ID
+            id: messageId, // <--- !!! ЭТА СТРОКА ОБЯЗАТЕЛЬНА !!!
             sender_id: currentUser.id,
             receiver_id: partnerId,
             content: textToSend,
