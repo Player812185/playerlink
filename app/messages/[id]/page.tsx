@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown, Loader2 } from 'lucide-react'
 import { RealtimeChannel } from '@supabase/supabase-js'
 
 type Message = {
@@ -60,6 +60,10 @@ export default function ChatPage() {
     const [editingText, setEditingText] = useState('')
     const [isDragOver, setIsDragOver] = useState(false)
 
+    const [hasMore, setHasMore] = useState(true) // Есть ли еще старые сообщения?
+    const [isLoadingMore, setIsLoadingMore] = useState(false) // Чтобы не спамить запросами
+    const LIMIT = 50 // Сколько грузить за раз
+
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
     const scrollRef = useRef<HTMLDivElement>(null)
@@ -74,16 +78,40 @@ export default function ChatPage() {
         }
     }
 
-    const handleScroll = () => {
+    const handleScroll = async () => {
         if (!scrollRef.current) return
+
         const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
 
-        // Считаем, что мы "внизу", если до конца меньше 100px
+        // Логика кнопки "Вниз" (из прошлого шага)
         const bottomThreshold = 100
         const isBottom = scrollHeight - scrollTop - clientHeight < bottomThreshold
-
         setIsNearBottom(isBottom)
         setShowScrollButton(!isBottom)
+
+        // --- ЛОГИКА ПАГИНАЦИИ ---
+        // Если скролл вверху (меньше 50px), есть еще сообщения и мы не грузим прямо сейчас
+        if (scrollTop < 50 && hasMore && !isLoadingMore) {
+            setIsLoadingMore(true)
+
+            // Запоминаем текущую высоту, чтобы компенсировать сдвиг
+            const oldHeight = scrollRef.current.scrollHeight
+
+            // Грузим следующую порцию (сдвиг = текущая длина массива)
+            // Важно: length может включать оптимистичные, но для range это допустимая погрешность
+            await fetchMessages(messages.length, currentUser.id)
+
+            // Компенсируем скролл (возвращаем юзера туда, где он был визуально)
+            // requestAnimationFrame помогает сделать это до перерисовки кадра
+            requestAnimationFrame(() => {
+                if (scrollRef.current) {
+                    const newHeight = scrollRef.current.scrollHeight
+                    scrollRef.current.scrollTop = newHeight - oldHeight
+                }
+            })
+
+            setIsLoadingMore(false)
+        }
     }
 
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -110,7 +138,7 @@ export default function ChatPage() {
             setPartnerProfile(profile)
             setIsPartnerOnline(checkIsOnline(profile?.last_seen))
 
-            fetchMessages(user.id)
+            fetchMessages(0, user.id)
             markMessagesAsRead(user.id)
 
             // --- КАНАЛ 1: ЧАТ (Сообщения + Тайпинг) ---
@@ -217,13 +245,39 @@ export default function ChatPage() {
         return () => clearInterval(interval)
     }, [partnerProfile])
 
-    const fetchMessages = async (myId: string) => {
-        const { data } = await supabase
+    const fetchMessages = async (offset = 0, myId?: string) => {
+        const uid = myId || currentUser?.id
+        if (!uid) return
+
+        const { data, error } = await supabase
             .from('messages')
             .select('*')
-            .or(`and(sender_id.eq.${myId},receiver_id.eq.${partnerId}),and(sender_id.eq.${partnerId},receiver_id.eq.${myId})`)
-            .order('created_at', { ascending: true })
-        if (data) setMessages(data)
+            .or(`and(sender_id.eq.${uid},receiver_id.eq.${partnerId}),and(sender_id.eq.${partnerId},receiver_id.eq.${uid})`)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + LIMIT - 1)
+
+        if (error) {
+            console.error(error)
+            return
+        }
+
+        if (data) {
+            // Если вернулось меньше, чем лимит — значит история кончилась
+            if (data.length < LIMIT) setHasMore(false)
+
+            // Переворачиваем, так как UI ждет [Старые -> Новые]
+            const orderedData = data.reverse() as Message[]
+
+            if (offset === 0) {
+                // Первая загрузка
+                setMessages(orderedData)
+                // Скроллим вниз
+                setTimeout(() => scrollToBottom('auto'), 100)
+            } else {
+                // Подгрузка старых (Load More)
+                setMessages(prev => [...orderedData, ...prev])
+            }
+        }
     }
 
     const markMessagesAsRead = async (myId: string) => {
@@ -517,6 +571,11 @@ export default function ChatPage() {
                 ref={scrollRef}
                 onScroll={handleScroll} // <--- ВАЖНО: Обработчик скролла
             >
+                {isLoadingMore && (
+                    <div className="flex justify-center py-4">
+                        <Loader2 className="animate-spin text-muted-foreground w-6 h-6" />
+                    </div>
+                )}
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
                     const replyMsg = messages.find(m => m.id === msg.reply_to_id)
