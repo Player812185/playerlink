@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Settings, Heart, MessageCircle, Mail, UserCheck, UserPlus } from 'lucide-react'
 import { ExpandableContent } from '@/components/ExpandableContent'
+import { deletePostAction } from '@/app/actions/feed' // Server Action
+import { CreatePostWidget } from '@/components/CreatePostWidget' // Наш новый компонент
+import { Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
@@ -120,6 +123,23 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
         setIsFollowing(!isFollowing)
     }
 
+    const handleDeletePost = async (postId: string) => {
+        if (!confirm('Удалить этот пост?')) return
+
+        // Оптимистичное удаление
+        const oldPosts = [...posts]
+        setPosts(prev => prev.filter(p => p.id !== postId))
+
+        const res = await deletePostAction(postId)
+
+        if (res.error) {
+            toast.error(res.error)
+            setPosts(oldPosts) // Возвращаем если ошибка
+        } else {
+            toast.success('Пост удален')
+        }
+    }
+
     if (loading) return <div className="min-h-screen bg-background flex items-center justify-center">Загрузка...</div>
     if (!profile) return null
 
@@ -192,9 +212,28 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
             </div>
 
             <div className="max-w-xl mx-auto p-4 space-y-4">
+
+                {/* 1. ВИДЖЕТ СОЗДАНИЯ ПОСТА (Только если это мой профиль) */}
+                {isMe && (
+                    <CreatePostWidget onPostCreated={fetchData} />
+                )}
+
                 <h2 className="text-lg font-bold ml-1">Публикации</h2>
+
                 {posts.map(post => (
-                    <div key={post.id} className="bg-card border border-border p-5 rounded-3xl">
+                    <div key={post.id} className="bg-card border border-border p-5 rounded-3xl relative group"> {/* relative для кнопки удаления */}
+
+                        {/* 2. КНОПКА УДАЛЕНИЯ (Только если это мой профиль) */}
+                        {isMe && (
+                            <button
+                                onClick={() => handleDeletePost(post.id)}
+                                className="absolute top-4 right-4 p-2 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-xl transition opacity-0 group-hover:opacity-100"
+                                title="Удалить пост"
+                            >
+                                <Trash2 size={18} />
+                            </button>
+                        )}
+
                         <div className="mb-4">
                             <ExpandableContent content={post.content} />
                         </div>

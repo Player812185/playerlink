@@ -1,22 +1,23 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/utils/supabase'
-import { Bold, Italic, List, Code, Heart, MessageCircle, Send, Trash2, Paperclip, X, Mail } from 'lucide-react'
+import { Heart, MessageCircle, Send, Trash2, Mail } from 'lucide-react' // Убрали лишние иконки (Bold, Paperclip и т.д.)
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { ExpandableContent } from '@/components/ExpandableContent'
+import { CreatePostWidget } from '@/components/CreatePostWidget' // <--- Наш новый виджет
 import {
-  createPostAction,
   deletePostAction,
   toggleLikeAction,
   sendCommentAction,
   getCommentsAction
-} from '@/app/actions/feed'
+} from '@/app/actions/feed' // <--- Server Actions
 import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
 
+// ... (Типы Comment и Post оставляем как были) ...
 type Comment = {
   id: string
   content: string
@@ -27,7 +28,7 @@ type Comment = {
 type Post = {
   id: string
   content: string
-  image_url: string | null // Новое поле
+  image_url: string | null
   created_at: string
   profiles: { id: string; username: string; avatar_url: string }
   likes_count: number
@@ -40,13 +41,9 @@ type Post = {
 export default function Home() {
   const router = useRouter()
   const [posts, setPosts] = useState<Post[]>([])
-  const [content, setContent] = useState('')
   const [user, setUser] = useState<any>(null)
 
-  // Для загрузки картинок
-  const [file, setFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  // Мы УДАЛИЛИ: content, file, previewUrl, fileInputRef - это теперь внутри виджета
 
   const PLACEHOLDER_IMG = '/placeholder.png'
   const [userAvatar, setUserAvatar] = useState(PLACEHOLDER_IMG)
@@ -57,23 +54,19 @@ export default function Home() {
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
       setUser(user)
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('username, avatar_url')
-        .eq('id', user.id)
-        .single()
-
-      if (!profile?.username) {
-        router.push('/settings') // Или complete-profile
-      } else {
+      const { data: profile } = await supabase.from('profiles').select('username, avatar_url').eq('id', user.id).single()
+      if (!profile?.username) router.push('/settings')
+      else {
         setUserAvatar(profile.avatar_url || PLACEHOLDER_IMG)
-        setCurrentUsername(profile.username) // <--- СОХРАНЯЕМ ЮЗЕРНЕЙМ
+        setCurrentUsername(profile.username)
       }
     }
     fetchPosts(user)
   }
 
   const fetchPosts = async (currentUser = user) => {
+    // Оставляем старый fetch или переносим его в Server Action (getFeedAction) - по желанию. 
+    // Пока оставим клиентский fetch для простоты, так как он сложный (join-ы).
     const { data } = await supabase
       .from('posts')
       .select(`*, profiles(id, username, avatar_url), likes(user_id), comments(count)`)
@@ -89,6 +82,7 @@ export default function Home() {
         comments: []
       }))
 
+      // Логика сохранения открытых комментариев при обновлении
       setPosts(prev => {
         if (prev.length === 0) return formatted
         return formatted.map((newPost: any) => {
@@ -100,77 +94,50 @@ export default function Home() {
     }
   }
 
-  // Обработка выбора файла
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0]
-      setFile(selectedFile)
-      setPreviewUrl(URL.createObjectURL(selectedFile))
-    }
-  }
+  // --- ACTIONS ---
 
-  const clearFile = () => {
-    setFile(null)
-    setPreviewUrl(null)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
+  // 1. УДАЛЕНИЕ (Server Action)
+  const deletePost = async (postId: string) => {
+    if (!confirm('Удалить пост?')) return
 
-  const createPost = async () => {
-    if ((!content.trim() && !file) || !user) return
+    // Optimistic
+    const oldPosts = [...posts]
+    setPosts(prev => prev.filter(p => p.id !== postId))
 
-    let uploadedImageUrl = null
-
-    // Загрузка файла остается на клиенте (для скорости)
-    if (file) {
-      const fileExt = file.name.split('.').pop()
-      const fileName = `${user.id}-${Date.now()}.${fileExt}`
-      const { error: uploadError } = await supabase.storage.from('post-images').upload(fileName, file)
-      if (!uploadError) {
-        const { data } = supabase.storage.from('post-images').getPublicUrl(fileName)
-        uploadedImageUrl = data.publicUrl
-      } else {
-        return toast.error('Ошибка загрузки фото')
-      }
-    }
-
-    // SERVER ACTION
-    const res = await createPostAction(content, uploadedImageUrl)
+    const res = await deletePostAction(postId)
 
     if (res.error) {
       toast.error(res.error)
+      setPosts(oldPosts)
     } else {
-      toast.success('Пост опубликован')
-      setContent('')
-      clearFile()
-      fetchPosts() // Обновляем ленту
+      toast.success('Пост удален')
     }
   }
 
+  // 2. ЛАЙК (Server Action)
   const toggleLike = async (postId: string, isLiked: boolean) => {
     if (!user) return router.push('/login')
 
-    // 1. Оптимистичное обновление (сразу меняем цифру и иконку)
+    // Optimistic UI
     setPosts(current => current.map(p => {
-        if (p.id === postId) {
-            return {
-                ...p,
-                is_liked: !isLiked,
-                likes_count: isLiked ? p.likes_count - 1 : p.likes_count + 1
-            }
+      if (p.id === postId) {
+        return {
+          ...p,
+          is_liked: !isLiked,
+          likes_count: isLiked ? p.likes_count - 1 : p.likes_count + 1
         }
-        return p
+      }
+      return p
     }))
 
-    // 2. Запрос на сервер
     const res = await toggleLikeAction(postId, isLiked)
-    
-    // 3. Если ошибка — откатываем (или просто перегружаем посты)
     if (res.error) {
-        toast.error('Не удалось лайкнуть')
-        fetchPosts() 
+      toast.error('Не удалось лайкнуть')
+      fetchPosts() // Откат
     }
   }
 
+  // 3. КОММЕНТАРИИ (Server Action)
   const toggleComments = async (postId: string) => {
     setPosts(currentPosts => currentPosts.map(post => {
       if (post.id === postId) {
@@ -182,52 +149,33 @@ export default function Home() {
   }
 
   const loadComments = async (postId: string) => {
-    const { data } = await supabase.from('comments').select('*, profiles(username, avatar_url)').eq('post_id', postId).order('created_at', { ascending: true })
-    if (data) setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: data } : p))
+    // Используем наш новый Action для загрузки
+    const res = await getCommentsAction(postId)
+    if (res.data) {
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: res.data as any } : p))
+    }
   }
 
   const sendComment = async (postId: string) => {
     const text = commentInputs[postId]
     if (!text?.trim() || !user) return
 
+    // Optimistic UI для комментов сложнее, поэтому просто ждем (или можно добавить "фейковый")
     const res = await sendCommentAction(postId, text)
 
     if (res.error) {
-        toast.error(res.error)
+      toast.error(res.error)
     } else {
-        setCommentInputs(prev => ({ ...prev, [postId]: '' }))
-        loadComments(postId) // Тут уже можно вызывать action getCommentsAction внутри loadComments
+      setCommentInputs(prev => ({ ...prev, [postId]: '' }))
+      loadComments(postId)
+      toast.success('Комментарий отправлен')
     }
-  }
-
-  const deletePost = async (postId: string) => {
-    if (!confirm('Удалить пост?')) return
-    await supabase.from('posts').delete().eq('id', postId)
-    fetchPosts()
-  }
-
-  const insertFormat = (prefix: string, suffix: string) => {
-    const textarea = document.querySelector('textarea') as HTMLTextAreaElement
-    if (!textarea) return
-
-    const start = textarea.selectionStart
-    const end = textarea.selectionEnd
-    const text = textarea.value
-
-    const before = text.substring(0, start)
-    const selection = text.substring(start, end)
-    const after = text.substring(end)
-
-    setContent(`${before}${prefix}${selection}${suffix}${after}`)
-    textarea.focus()
   }
 
   useEffect(() => {
     checkUserAndFetch()
-    const channel = supabase
-      .channel('realtime_feed')
+    const channel = supabase.channel('realtime_feed')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => fetchPosts())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'likes' }, () => fetchPosts())
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [])
@@ -235,116 +183,40 @@ export default function Home() {
   return (
     <div className="min-h-screen pb-20 font-sans bg-background text-foreground transition-colors duration-300">
 
+      {/* HEADER */}
       <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-lg border-b border-border px-4 py-4 transition-colors duration-300">
         <div className="max-w-xl mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-bold tracking-tight text-foreground">
-            Playerlink
-          </h1>
-
+          <h1 className="text-xl font-bold tracking-tight text-foreground">Playerlink</h1>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-
             {user && (
-              <Link
-                href="/messages"
-                className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition relative"
-                title="Мои сообщения"
-              >
+              <Link href="/messages" className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition relative">
                 <Mail size={20} />
               </Link>
             )}
-
             {user ? (
               <Link href={currentUsername ? `/u/${currentUsername}` : '#'} className="block relative ml-1">
-                <img
-                  src={userAvatar}
-                  className="w-10 h-10 rounded-2xl object-cover border border-border hover:border-primary transition duration-300"
-                  onError={(e) => e.currentTarget.src = PLACEHOLDER_IMG}
-                />
+                <img src={userAvatar} className="w-10 h-10 rounded-2xl object-cover border border-border hover:border-primary transition duration-300" onError={(e) => e.currentTarget.src = PLACEHOLDER_IMG} />
               </Link>
             ) : (
-              <Link href="/login" className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-xl text-sm font-semibold transition shadow-lg shadow-primary/20">
-                Войти
-              </Link>
+              <Link href="/login" className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-xl text-sm font-semibold transition shadow-lg shadow-primary/20">Войти</Link>
             )}
           </div>
         </div>
       </header>
 
       <main className="max-w-xl mx-auto p-4">
-        {/* Создание поста с Редактором */}
+
+        {/* --- ВИДЖЕТ СОЗДАНИЯ ПОСТА --- */}
+        {/* Заменили огромный кусок кода на одну строку */}
         {user && (
-          <div className="mb-6 bg-card p-4 rounded-3xl border border-border shadow-sm">
-            {/* Тулбар */}
-            <div className="flex gap-1 mb-2 overflow-x-auto pb-2 border-b border-border/50">
-              <button onClick={() => insertFormat('**', '**')} className="p-2 hover:bg-muted rounded text-muted-foreground hover:text-foreground" title="Жирный">
-                <Bold size={16} />
-              </button>
-              <button onClick={() => insertFormat('*', '*')} className="p-2 hover:bg-muted rounded text-muted-foreground hover:text-foreground" title="Курсив">
-                <Italic size={16} />
-              </button>
-              <button onClick={() => insertFormat('\n- ', '')} className="p-2 hover:bg-muted rounded text-muted-foreground hover:text-foreground" title="Список">
-                <List size={16} />
-              </button>
-              <button onClick={() => insertFormat('`', '`')} className="p-2 hover:bg-muted rounded text-muted-foreground hover:text-foreground" title="Код">
-                <Code size={16} />
-              </button>
-              {/* Подсказка про упоминания */}
-              <span className="ml-auto text-xs text-muted-foreground flex items-center px-2">
-                @ник для упоминания
-              </span>
-            </div>
-
-            <div className="flex gap-3 items-start">
-              <div className="flex-grow space-y-3">
-                <textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  placeholder="Что нового?"
-                  className="w-full bg-transparent text-foreground p-2 min-h-[80px] resize-none focus:outline-none placeholder-muted-foreground"
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); createPost() } }}
-                />
-
-                {/* Превью картинки */}
-                {previewUrl && (
-                  <div className="relative inline-block">
-                    <img src={previewUrl} className="h-24 w-auto rounded-xl border border-border object-cover" />
-                    <button onClick={clearFile} className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full shadow-md hover:bg-red-600 transition">
-                      <X size={12} />
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {/* Кнопка отправки */}
-                <button
-                  onClick={createPost}
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground p-4 rounded-2xl transition shadow-lg shadow-primary/20 flex items-center justify-center aspect-square"
-                >
-                  <Send size={20} />
-                </button>
-
-                {/* Кнопка скрепки */}
-                <label className="bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground p-4 rounded-2xl transition cursor-pointer flex items-center justify-center aspect-square">
-                  <Paperclip size={20} />
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleFileSelect}
-                    ref={fileInputRef}
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
+          <CreatePostWidget onPostCreated={() => fetchPosts(user)} />
         )}
 
-        {/* Лента */}
+        {/* --- ЛЕНТА --- */}
         <div className="space-y-4">
           {posts.map((post) => (
-            <div key={post.id} className="bg-card border border-border p-5 rounded-3xl hover:border-muted-foreground/30 transition duration-300 shadow-sm">
+            <div key={post.id} className="bg-card border border-border p-5 rounded-3xl hover:border-muted-foreground/30 transition duration-300 shadow-sm relative group">
 
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3">
@@ -364,31 +236,35 @@ export default function Home() {
                     <p className="text-xs text-muted-foreground">{new Date(post.created_at).toLocaleDateString()}</p>
                   </div>
                 </div>
+
+                {/* КНОПКА УДАЛЕНИЯ (Теперь через Action) */}
                 {user && user.id === post.profiles?.id && (
-                  <button onClick={() => deletePost(post.id)} className="p-2 rounded-xl hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition">
+                  <button
+                    onClick={() => deletePost(post.id)}
+                    className="p-2 rounded-xl hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition"
+                  >
                     <Trash2 size={16} />
                   </button>
                 )}
               </div>
 
-              {/* Контент с Markdown */}
+              {/* Контент */}
               <div className="mb-5 text-foreground leading-relaxed pl-1">
                 <ExpandableContent content={post.content} />
               </div>
-              {/* Картинка поста */}
+
+              {/* Картинка */}
               {post.image_url && (
                 <div className="mb-5 rounded-2xl overflow-hidden border border-border bg-muted">
                   <img src={post.image_url} className="w-full h-auto max-h-96 object-cover" />
                 </div>
               )}
 
+              {/* Футер поста (Лайки, Комменты) */}
               <div className="flex gap-4">
                 <button
                   onClick={() => toggleLike(post.id, post.is_liked)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition duration-300 ${post.is_liked
-                    ? 'bg-red-500/10 text-red-500'
-                    : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'
-                    }`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition duration-300 ${post.is_liked ? 'bg-red-500/10 text-red-500' : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'}`}
                 >
                   <Heart size={18} className={post.is_liked ? "fill-current" : ""} />
                   {post.likes_count}
@@ -396,16 +272,14 @@ export default function Home() {
 
                 <button
                   onClick={() => toggleComments(post.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition duration-300 ${post.show_comments
-                    ? 'bg-primary/10 text-primary'
-                    : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'
-                    }`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition duration-300 ${post.show_comments ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'}`}
                 >
                   <MessageCircle size={18} />
                   {post.comments_count > 0 ? post.comments_count : 'Коммент'}
                 </button>
               </div>
 
+              {/* Секция комментариев */}
               {post.show_comments && (
                 <div className="mt-4 pt-4 border-t border-border animate-in slide-in-from-top-2 fade-in duration-200">
                   <div className="space-y-3 mb-4 max-h-64 overflow-y-auto custom-scrollbar">
