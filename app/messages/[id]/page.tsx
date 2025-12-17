@@ -29,6 +29,12 @@ const checkIsOnline = (lastSeen: string | null) => {
     return diff < 2 * 60 * 1000
 }
 
+function uuidv4() {
+    return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
+        (+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16)
+    );
+}
+
 export default function ChatPage() {
     const { id: partnerId } = useParams()
 
@@ -325,26 +331,26 @@ export default function ChatPage() {
 
         if ((!textToSend.trim() && !hasAnyFiles) || !currentUser) return
 
-        // 1. Генерируем временный ID и объект сообщения
-        const tempId = `temp-${Date.now()}`
+        // 1. Генерируем НАСТОЯЩИЙ UUID на клиенте
+        const messageId = uuidv4()
+
         const optimisticMsg: Message = {
-            id: tempId,
+            id: messageId, // <--- Используем его здесь
             content: textToSend,
             sender_id: currentUser.id,
             receiver_id: partnerId as string,
             created_at: new Date().toISOString(),
             is_read: false,
             reply_to_id: replyTo?.id || null,
-            file_url: null, // Пока без превью файлов для простоты (или можно добавить blob url)
-            isOptimistic: true // Флаг для UI
+            file_url: null,
+            isOptimistic: true
         }
 
-        // 2. СРАЗУ показываем его в чате (только если это текст, с файлами сложнее)
+        // 2. СРАЗУ добавляем в стейт
         if (!hasAnyFiles) {
             setMessages(prev => [...prev, optimisticMsg])
-            setNewMessage('') // Очищаем поле ввода мгновенно
+            setNewMessage('')
             setReplyTo(null)
-            // Скроллим вниз (используем нашу новую функцию)
             setTimeout(() => scrollToBottom(), 10)
         }
 
@@ -379,8 +385,8 @@ export default function ChatPage() {
             uploadedUrl = uploadedUrls[0] || null
         }
 
-        // 4. Отправляем в базу
-        const { data: realMsgData, error } = await supabase.from('messages').insert({
+        const { error } = await supabase.from('messages').insert({
+            id: messageId, // <--- ВАЖНО: Мы форсируем ID
             sender_id: currentUser.id,
             receiver_id: partnerId,
             content: textToSend,
@@ -388,27 +394,21 @@ export default function ChatPage() {
             file_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
             file_names: fileNames.length > 0 ? fileNames : null,
             reply_to_id: optimisticMsg.reply_to_id
-        }).select().single() // <--- ВАЖНО: Добавляем .select().single(), чтобы получить реальный ID
+        })
 
-        // 5. Обрабатываем результат
+        // 5. Обработка результата
         if (error) {
             console.error('Ошибка отправки', error)
-            if (!hasAnyFiles) {
-                // Помечаем сообщение как ошибочное
-                setMessages(prev => prev.map(m => m.id === tempId ? { ...m, isOptimistic: false, isError: true } : m))
-            } else {
-                alert('Ошибка отправки сообщения')
-            }
+            // Помечаем сообщение как ошибочное (по тому же ID)
+            setMessages(prev => prev.map(m => m.id === messageId ? { ...m, isOptimistic: false, isError: true } : m))
         } else {
             // Успех!
+            // Снимаем флаг optimistic. Данные менять не надо, ID и так верный.
+            setMessages(prev => prev.map(m => m.id === messageId ? { ...m, isOptimistic: false } : m))
+
             if (!hasAnyFiles) {
-                // Заменяем временное сообщение на реальное из базы
-                setMessages(prev => prev.map(m => m.id === tempId ? (realMsgData as Message) : m))
+                // Если файлов не было, мы уже очистили поле в пункте 2
             } else {
-                // Если были файлы (мы их не добавляли оптимистично), добавляем сейчас
-                // Хотя Realtime скорее всего это уже сделал, но для надежности можно так:
-                // setMessages(prev => [...prev, realMsgData as Message]) 
-                // Но лучше оставить очистку:
                 setNewMessage('')
                 setFiles([])
                 setFilePreviews([])
@@ -416,7 +416,7 @@ export default function ChatPage() {
                 if (fileInputRef.current) fileInputRef.current.value = ''
             }
 
-            // Push уведомление (как и было)
+            // Push уведомление
             if (type !== 'audio') {
                 fetch('/api/send-push', {
                     method: 'POST',
