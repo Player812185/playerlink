@@ -6,6 +6,14 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { ExpandableContent } from '@/components/ExpandableContent'
+import {
+  createPostAction,
+  deletePostAction,
+  toggleLikeAction,
+  sendCommentAction,
+  getCommentsAction
+} from '@/app/actions/feed'
+import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
 
@@ -112,39 +120,55 @@ export default function Home() {
 
     let uploadedImageUrl = null
 
-    // 1. Если есть файл, загружаем его
+    // Загрузка файла остается на клиенте (для скорости)
     if (file) {
       const fileExt = file.name.split('.').pop()
       const fileName = `${user.id}-${Date.now()}.${fileExt}`
-
-      const { error: uploadError } = await supabase.storage
-        .from('post-images')
-        .upload(fileName, file)
-
+      const { error: uploadError } = await supabase.storage.from('post-images').upload(fileName, file)
       if (!uploadError) {
         const { data } = supabase.storage.from('post-images').getPublicUrl(fileName)
         uploadedImageUrl = data.publicUrl
+      } else {
+        return toast.error('Ошибка загрузки фото')
       }
     }
 
-    // 2. Создаем пост
-    await supabase.from('posts').insert({
-      user_id: user.id,
-      content,
-      image_url: uploadedImageUrl
-    })
+    // SERVER ACTION
+    const res = await createPostAction(content, uploadedImageUrl)
 
-    setContent('')
-    clearFile()
-    fetchPosts()
+    if (res.error) {
+      toast.error(res.error)
+    } else {
+      toast.success('Пост опубликован')
+      setContent('')
+      clearFile()
+      fetchPosts() // Обновляем ленту
+    }
   }
 
-  // ... остальные функции (toggleLike, toggleComments и т.д.) без изменений ...
   const toggleLike = async (postId: string, isLiked: boolean) => {
     if (!user) return router.push('/login')
-    if (isLiked) await supabase.from('likes').delete().match({ user_id: user.id, post_id: postId })
-    else await supabase.from('likes').insert({ user_id: user.id, post_id: postId })
-    fetchPosts()
+
+    // 1. Оптимистичное обновление (сразу меняем цифру и иконку)
+    setPosts(current => current.map(p => {
+        if (p.id === postId) {
+            return {
+                ...p,
+                is_liked: !isLiked,
+                likes_count: isLiked ? p.likes_count - 1 : p.likes_count + 1
+            }
+        }
+        return p
+    }))
+
+    // 2. Запрос на сервер
+    const res = await toggleLikeAction(postId, isLiked)
+    
+    // 3. Если ошибка — откатываем (или просто перегружаем посты)
+    if (res.error) {
+        toast.error('Не удалось лайкнуть')
+        fetchPosts() 
+    }
   }
 
   const toggleComments = async (postId: string) => {
@@ -165,10 +189,14 @@ export default function Home() {
   const sendComment = async (postId: string) => {
     const text = commentInputs[postId]
     if (!text?.trim() || !user) return
-    const { error } = await supabase.from('comments').insert({ user_id: user.id, post_id: postId, content: text })
-    if (!error) {
-      setCommentInputs(prev => ({ ...prev, [postId]: '' }))
-      loadComments(postId)
+
+    const res = await sendCommentAction(postId, text)
+
+    if (res.error) {
+        toast.error(res.error)
+    } else {
+        setCommentInputs(prev => ({ ...prev, [postId]: '' }))
+        loadComments(postId) // Тут уже можно вызывать action getCommentsAction внутри loadComments
     }
   }
 

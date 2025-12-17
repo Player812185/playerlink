@@ -6,6 +6,13 @@ import Link from 'next/link'
 import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown, Loader2, Copy } from 'lucide-react'
 import { RealtimeChannel } from '@supabase/supabase-js'
 import { toast } from 'sonner'
+import {
+    sendMessageAction,
+    getMessagesAction,
+    markAsReadAction,
+    deleteMessageAction,
+    editMessageAction
+} from '@/app/actions/chat'
 
 type Message = {
     id: string
@@ -247,42 +254,33 @@ export default function ChatPage() {
     }, [partnerProfile])
 
     const fetchMessages = async (offset = 0, myId?: string) => {
-        const uid = myId || currentUser?.id
-        if (!uid) return
-
-        const { data, error } = await supabase
-            .from('messages')
-            .select('*')
-            .or(`and(sender_id.eq.${uid},receiver_id.eq.${partnerId}),and(sender_id.eq.${partnerId},receiver_id.eq.${uid})`)
-            .order('created_at', { ascending: false })
-            .range(offset, offset + LIMIT - 1)
+        // Вызываем Server Action
+        const { data, error } = await getMessagesAction(partnerId as string, offset)
 
         if (error) {
             console.error(error)
+            toast.error('Ошибка загрузки истории')
             return
         }
 
         if (data) {
-            // Если вернулось меньше, чем лимит — значит история кончилась
             if (data.length < LIMIT) setHasMore(false)
 
-            // Переворачиваем, так как UI ждет [Старые -> Новые]
-            const orderedData = data.reverse() as Message[]
+            // data уже перевернут на сервере как надо
+            const messagesData = data as Message[]
 
             if (offset === 0) {
-                // Первая загрузка
-                setMessages(orderedData)
-                // Скроллим вниз
+                setMessages(messagesData)
                 setTimeout(() => scrollToBottom('auto'), 100)
             } else {
-                // Подгрузка старых (Load More)
-                setMessages(prev => [...orderedData, ...prev])
+                setMessages(prev => [...messagesData, ...prev])
             }
         }
     }
 
     const markMessagesAsRead = async (myId: string) => {
-        await supabase.from('messages').update({ is_read: true }).eq('sender_id', partnerId).eq('receiver_id', myId).eq('is_read', false)
+        // Просто вызываем экшен, результат ждать не обязательно
+        await markAsReadAction(partnerId as string)
     }
 
     const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -363,26 +361,19 @@ export default function ChatPage() {
             cancelEdit()
             return
         }
-        if (!currentUser) return
 
-        const { data, error } = await supabase
-            .from('messages')
-            .update({ content: editingText })
-            .eq('id', editingMessage.id)
-            .eq('sender_id', currentUser.id)
-            .select('*')
-            .single()
-
-        if (error) {
-            console.error('Ошибка обновления сообщения', error)
-            toast.error('Не удалось изменить сообщение (ограничения безопасности).')
-            return
-        }
-
-        // Обновляем локально подтверждённым значением из БД
-        setMessages(prev => prev.map(m => m.id === editingMessage.id ? { ...(m as Message), ...(data as Message) } : m))
-
+        // Оптимистичное обновление UI (сразу меняем текст)
+        const oldMessages = [...messages]
+        setMessages(prev => prev.map(m => m.id === editingMessage.id ? { ...m, content: editingText, updated_at: new Date().toISOString() } : m))
         cancelEdit()
+
+        // Запрос на сервер
+        const result = await editMessageAction(editingMessage.id, editingText)
+
+        if (result.error) {
+            toast.error(result.error)
+            setMessages(oldMessages) // Откат при ошибке
+        }
     }
 
     const sendMessage = async (overrideFile?: File, type: 'text' | 'audio' = 'text') => {
@@ -446,25 +437,23 @@ export default function ChatPage() {
             uploadedUrl = uploadedUrls[0] || null
         }
 
-        const { error } = await supabase.from('messages').insert({
-            id: messageId, // <--- !!! ЭТА СТРОКА ОБЯЗАТЕЛЬНА !!!
-            sender_id: currentUser.id,
-            receiver_id: partnerId,
+        const result = await sendMessageAction({
+            id: messageId,
             content: textToSend,
-            file_url: uploadedUrl,
-            file_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
-            file_names: fileNames.length > 0 ? fileNames : null,
-            reply_to_id: optimisticMsg.reply_to_id
+            receiverId: partnerId as string,
+            fileUrl: uploadedUrl,
+            fileUrls: uploadedUrls.length > 0 ? uploadedUrls : null,
+            fileNames: fileNames.length > 0 ? fileNames : null,
+            replyToId: optimisticMsg.reply_to_id
         })
 
         // 5. Обработка результата
-        if (error) {
-            console.error('Ошибка отправки', error)
-            // Помечаем сообщение как ошибочное (по тому же ID)
+        if (result.error) {
+            console.error('Server Action Error:', result.error)
+            toast.error(result.error)
             setMessages(prev => prev.map(m => m.id === messageId ? { ...m, isOptimistic: false, isError: true } : m))
         } else {
             // Успех!
-            // Снимаем флаг optimistic. Данные менять не надо, ID и так верный.
             setMessages(prev => prev.map(m => m.id === messageId ? { ...m, isOptimistic: false } : m))
 
             if (!hasAnyFiles) {
@@ -492,20 +481,19 @@ export default function ChatPage() {
     }
 
     const deleteMessage = async (msg: Message) => {
-        if (!confirm('Удалить?')) return
-        const urls = (msg.file_urls && msg.file_urls.length > 0)
-            ? msg.file_urls
-            : (msg.file_url ? [msg.file_url] : [])
+        if (!confirm('Удалить сообщение?')) return
 
-        if (urls.length) {
-            const paths = urls
-                .map(u => u.split('/').pop()!)
-                .filter(Boolean)
-            if (paths.length) {
-                await supabase.storage.from('chat-attachments').remove(paths)
-            }
+        // Оптимистичное удаление (сразу убираем из списка)
+        const oldMessages = [...messages]
+        setMessages(prev => prev.filter(m => m.id !== msg.id))
+
+        // Запрос на сервер
+        const result = await deleteMessageAction(msg.id)
+
+        if (result.error) {
+            toast.error('Не удалось удалить')
+            setMessages(oldMessages) // Откат при ошибке
         }
-        await supabase.from('messages').delete().eq('id', msg.id)
     }
 
     const copyToClipboard = async (text: string) => {

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/utils/supabase'
 import Link from 'next/link'
 import { ArrowLeft, Camera, LogOut, User, AtSign, Loader2 } from 'lucide-react'
+import { updateProfileAction } from '@/app/actions/profile'
 import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
@@ -46,35 +47,21 @@ export default function Settings() {
     const updateProfile = async () => {
         if (!userId) return
 
-        // Валидация юзернейма
-        if (username.length < 3) return toast.error('Юзернейм слишком короткий!')
+        setSaving(true) // Показываем спиннер
 
-        setSaving(true)
+        // Вызов Server Action
+        const res = await updateProfileAction({
+            username,
+            fullName,
+            avatarUrl
+        })
 
-        try {
-            const updates = {
-                username: username,     // Технический ник (для ссылок @)
-                full_name: fullName,    // Отображаемое имя (Иван Иванов)
-                avatar_url: avatarUrl,
-                updated_at: new Date().toISOString(),
-            }
+        setSaving(false)
 
-            const { error } = await supabase
-                .from('profiles')
-                .update(updates)
-                .eq('id', userId)
-
-            if (error) {
-                // Ошибка уникальности (код 23505 в Postgres)
-                if (error.code === '23505') toast.error('Этот юзернейм уже занят!')
-                else throw error
-            } else {
-                toast.success('Профиль обновлен!')
-            }
-        } catch (error: any) {
-            toast.error('Ошибка обновления: ' + error.message)
-        } finally {
-            setSaving(false)
+        if (res.error) {
+            toast.error(res.error)
+        } else {
+            toast.success('Профиль обновлен!')
         }
     }
 
