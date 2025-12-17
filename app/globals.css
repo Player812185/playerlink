@@ -5,76 +5,66 @@
 @layer base {
   :root {
     /* Светлая тема */
-    --background: #fafafa;
-    --foreground: #18181b;
-    /* Zinc-900 */
-
-    --card: #ffffff;
-    --card-foreground: #18181b;
-
-    --popover: #ffffff;
-    --popover-foreground: #18181b;
-
-    --primary: #3b82f6;
-    /* Blue-500 */
-    --primary-foreground: #ffffff;
-
-    --secondary: #f4f4f5;
-    /* Zinc-100 */
-    --secondary-foreground: #18181b;
-
-    --muted: #f4f4f5;
-    --muted-foreground: #71717a;
-    /* Zinc-500 */
-
-    --accent: #f4f4f5;
-    --accent-foreground: #18181b;
-
-    --destructive: #ef4444;
-    --destructive-foreground: #ffffff;
-
-    --border: #e4e4e7;
-    /* Zinc-200 */
-    --input: #e4e4e7;
-    --ring: #3b82f6;
-
+    --background: 0 0% 98%;      /* #fafafa */
+    --foreground: 240 5% 10%;    /* #18181b */
+    
+    --card: 0 0% 100%;           /* #ffffff */
+    --card-foreground: 240 5% 10%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 5% 10%;
+    
+    --primary: 221 96% 60%;      /* #3b82f6 */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 5% 10%;
+    
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 5% 10%;
+    
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 221 96% 60%;
+    
     --radius: 1rem;
-    /* rounded-2xl */
   }
 
   .dark {
-    /* Темная тема (твой запрос) */
-    --background: #0a0a0f;
-    --foreground: #e4e4e7;
-    /* Zinc-200 */
-
-    --card: #141419;
-    --card-foreground: #e4e4e7;
-
-    --popover: #141419;
-    --popover-foreground: #e4e4e7;
-
-    --primary: #3b82f6;
-    --primary-foreground: #ffffff;
-
-    --secondary: #27272a;
-    /* Zinc-800 */
-    --secondary-foreground: #e4e4e7;
-
-    --muted: #1e1e24;
-    /* Чуть темнее карточки */
-    --muted-foreground: #a1a1aa;
-    /* Zinc-400 */
-
-    --accent: #27272a;
-    --accent-foreground: #e4e4e7;
-
-    --destructive: #7f1d1d;
-    --destructive-foreground: #e4e4e7;
-
-    --border: #27272a;
-    --input: #27272a;
-    --ring: #1d4ed8;
+    /* Темная тема (Neo-Glass) */
+    --background: 240 10% 4%;    /* #0a0a0f */
+    --foreground: 0 0% 95%;      /* #e4e4e7 */
+    
+    --card: 240 10% 9%;          /* #141419 */
+    --card-foreground: 0 0% 95%;
+    
+    --popover: 240 10% 9%;
+    --popover-foreground: 0 0% 95%;
+    
+    --primary: 221 96% 60%;      /* #3b82f6 */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 0 0% 98%;
+    
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+    
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 98%;
+    
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 98%;
+    
+    --border: 240 4% 16%;        /* #27272a */
+    --input: 240 4% 16%;
+    --ring: 221 96% 60%;
   }
 }
 
@@ -82,36 +72,31 @@
   * {
     @apply border-border;
   }
-
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary/20 selection:text-primary;
   }
 }
 
-/* Custom Scrollbar for minimalistic look */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 10px;
+  @apply bg-border rounded-full;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-foreground);
+  @apply bg-muted-foreground/50;
 }
 
-/* Utilities for Glassmorphism */
+/* Utilities */
 @layer utilities {
   .glass {
     @apply bg-background/80 backdrop-blur-xl border-b border-border/50;
   }
-
+  
   .glass-card {
     @apply bg-card/50 backdrop-blur-md border border-white/5;
   }
