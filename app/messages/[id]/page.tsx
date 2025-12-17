@@ -3,8 +3,9 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown, Loader2 } from 'lucide-react'
+import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown, Loader2, Copy } from 'lucide-react'
 import { RealtimeChannel } from '@supabase/supabase-js'
+import { toast } from 'sonner'
 
 type Message = {
     id: string
@@ -339,7 +340,7 @@ export default function ChatPage() {
             }
             mediaRecorder.start()
             setIsRecording(true)
-        } catch { alert('Микрофон недоступен') }
+        } catch { toast.error('Микрофон недоступен') }
     }
     const stopRecording = () => { mediaRecorderRef.current?.stop(); setIsRecording(false) }
 
@@ -374,7 +375,7 @@ export default function ChatPage() {
 
         if (error) {
             console.error('Ошибка обновления сообщения', error)
-            alert('Не удалось изменить сообщение (ограничения безопасности).')
+            toast.error('Не удалось изменить сообщение (ограничения безопасности).')
             return
         }
 
@@ -505,6 +506,17 @@ export default function ChatPage() {
             }
         }
         await supabase.from('messages').delete().eq('id', msg.id)
+    }
+
+    const copyToClipboard = async (text: string) => {
+        if (!text) return
+        try {
+            await navigator.clipboard.writeText(text)
+            toast.success('Текст скопирован')
+        } catch (err) {
+            console.error('Failed to copy:', err)
+            toast.error('Не удалось скопировать')
+        }
     }
 
     const getLastSeenText = () => {
@@ -661,8 +673,19 @@ export default function ChatPage() {
                                     {isMe && !isOptimistic && !isError && <span>{msg.is_read ? <CheckCheck size={14} /> : <Check size={14} />}</span>}
                                     {isError && <span title="Ошибка">⚠️</span>}
                                 </div>
-                                <div className={`absolute top-0 ${isMe ? '-left-16' : '-right-16'} h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
+                                <div className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
                                     <button onClick={() => setReplyTo(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"><Reply size={14} /></button>
+
+                                    {msg.content && (
+                                        <button
+                                            onClick={() => copyToClipboard(msg.content)}
+                                            className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"
+                                            title="Копировать"
+                                        >
+                                            <Copy size={14} />
+                                        </button>
+                                    )}
+
                                     {isMe && !msg.file_url && (
                                         <button
                                             onClick={() => startEditMessage(msg)}

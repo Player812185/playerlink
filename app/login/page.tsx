@@ -1,6 +1,7 @@
 'use client'
 import { supabase } from '@/utils/supabase'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -23,11 +24,11 @@ export default function Login() {
         password,
         options: { data: { full_name: email.split('@')[0], avatar_url: '' } }
       })
-      if (error) alert(error.message)
-      else alert('Проверьте почту!')
+      if (error) toast.error(error.message)
+      else toast.info('Проверьте почту!')
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) alert(error.message)
+      if (error) toast.error(error.message)
       else location.href = '/'
     }
     setLoading(false)

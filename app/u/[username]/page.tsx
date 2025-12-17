@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Settings, Heart, MessageCircle, Mail, UserCheck, UserPlus } from 'lucide-react'
 import { ExpandableContent } from '@/components/ExpandableContent'
+import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,12 +57,12 @@ export default function UserProfile({ params }: { params: Promise<{ username: st
                             router.replace(`/u/${byId.username}`)
                         }
                     } else {
-                        alert('Пользователь не найден')
+                        toast.error('Пользователь не найден')
                         router.push('/')
                         return
                     }
                 } else {
-                    alert('Пользователь не найден')
+                    toast.error('Пользователь не найден')
                     router.push('/')
                     return
                 }

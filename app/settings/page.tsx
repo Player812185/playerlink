@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/utils/supabase'
 import Link from 'next/link'
 import { ArrowLeft, Camera, LogOut, User, AtSign, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,7 +47,7 @@ export default function Settings() {
         if (!userId) return
 
         // Валидация юзернейма
-        if (username.length < 3) return alert('Юзернейм слишком короткий!')
+        if (username.length < 3) return toast.error('Юзернейм слишком короткий!')
 
         setSaving(true)
 
@@ -65,13 +66,13 @@ export default function Settings() {
 
             if (error) {
                 // Ошибка уникальности (код 23505 в Postgres)
-                if (error.code === '23505') alert('Этот юзернейм уже занят!')
+                if (error.code === '23505') toast.error('Этот юзернейм уже занят!')
                 else throw error
             } else {
-                alert('Профиль обновлен!')
+                toast.success('Профиль обновлен!')
             }
         } catch (error: any) {
-            alert('Ошибка обновления: ' + error.message)
+            toast.error('Ошибка обновления: ' + error.message)
         } finally {
             setSaving(false)
         }
@@ -142,7 +143,7 @@ export default function Settings() {
 
         } catch (error) {
             console.error(error)
-            alert('Ошибка обработки картинки')
+            toast.error('Ошибка обработки картинки')
         }
     }
 

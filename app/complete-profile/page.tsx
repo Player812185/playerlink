@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,7 +40,7 @@ export default function CompleteProfile() {
 
     const handleSave = async () => {
         // ВАЛИДАЦИЯ:
-        if (!username.trim() || username.trim().length < 3) return alert('Никнейм должен быть минимум 3 символа!')
+        if (!username.trim() || username.trim().length < 3) return toast.error('Никнейм должен быть минимум 3 символа!')
         if (!userId) return
 
         setLoading(true)
@@ -54,7 +55,7 @@ export default function CompleteProfile() {
 
         if (existing) {
             setLoading(false)
-            return alert('Этот ник уже занят!')
+            return toast.error('Этот ник уже занят!')
         }
 
         // Сохраняем
@@ -68,7 +69,7 @@ export default function CompleteProfile() {
             .eq('id', userId)
 
         if (error) {
-            alert('Ошибка: ' + error.message)
+            toast.error('Ошибка: ' + error.message)
         } else {
             router.refresh() // Обновить кэш
             router.push('/') // Пускаем в ленту
@@ -83,7 +84,7 @@ export default function CompleteProfile() {
 
             // --- НОВАЯ ПРОВЕРКА ---
             if (file.type === 'image/gif') {
-                alert('GIF аватарки запрещены! Используйте JPG или PNG.')
+                toast.error('GIF аватарки запрещены! Используйте JPG или PNG.')
                 return
             }
             // ----------------------
@@ -98,7 +99,7 @@ export default function CompleteProfile() {
             const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
             setAvatarUrl(data.publicUrl)
         } catch (error) {
-            alert('Ошибка загрузки. Возможно, формат файла не поддерживается.')
+            toast.error('Ошибка загрузки. Возможно, формат файла не поддерживается.')
         }
     }
 

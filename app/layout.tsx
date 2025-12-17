@@ -3,7 +3,8 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { NotificationListener } from "@/components/NotificationListener";
 import OneSignalInit from '@/components/OneSignalInit';
-import OnlineHeartbeat from '@/components/OnlineHeartbeat' 
+import OnlineHeartbeat from '@/components/OnlineHeartbeat';
+import { Toaster } from 'sonner';
 
 export const metadata: Metadata = {
   title: "Playerlink",
@@ -30,6 +31,7 @@ export default function RootLayout({
           <OneSignalInit />
           <OnlineHeartbeat />
           {children}
+          <Toaster position="top-center" richColors />
         </Providers>
       </body>
     </html>
