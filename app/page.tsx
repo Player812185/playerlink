@@ -1,23 +1,23 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/utils/supabase'
-import { Heart, MessageCircle, Send, Trash2, Mail } from 'lucide-react' // Убрали лишние иконки (Bold, Paperclip и т.д.)
+import { Heart, MessageCircle, Trash2, Mail, Sparkles, Send } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { ExpandableContent } from '@/components/ExpandableContent'
-import { CreatePostWidget } from '@/components/CreatePostWidget' // <--- Наш новый виджет
+import { CreatePostWidget } from '@/components/CreatePostWidget'
 import {
   deletePostAction,
   toggleLikeAction,
   sendCommentAction,
   getCommentsAction
-} from '@/app/actions/feed' // <--- Server Actions
+} from '@/app/actions/feed'
 import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
 
-// ... (Типы Comment и Post оставляем как были) ...
+// ... (типы Comment и Post без изменений) ...
 type Comment = {
   id: string
   content: string
@@ -42,8 +42,6 @@ export default function Home() {
   const router = useRouter()
   const [posts, setPosts] = useState<Post[]>([])
   const [user, setUser] = useState<any>(null)
-
-  // Мы УДАЛИЛИ: content, file, previewUrl, fileInputRef - это теперь внутри виджета
 
   const PLACEHOLDER_IMG = '/placeholder.png'
   const [userAvatar, setUserAvatar] = useState(PLACEHOLDER_IMG)
@@ -181,138 +179,171 @@ export default function Home() {
   }, [])
 
   return (
-    <div className="min-h-screen pb-20 font-sans bg-background text-foreground transition-colors duration-300">
+    <div className="min-h-screen pb-20 font-sans bg-background text-foreground transition-colors duration-500">
 
-      {/* HEADER */}
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-lg border-b border-border px-4 py-4 transition-colors duration-300">
+      {/* HEADER: Glassmorphism */}
+      <header className="sticky top-0 z-50 glass px-4 py-4 transition-all duration-300">
         <div className="max-w-xl mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-bold tracking-tight text-foreground">Playerlink</h1>
+
+          {/* Logo with Gradient */}
+          <Link href="/" className="flex items-center gap-2 group">
+            <div className="bg-primary/10 p-2 rounded-xl group-hover:scale-110 transition-transform duration-300">
+              <Sparkles className="text-primary w-5 h-5" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight text-gradient">
+              Playerlink
+            </h1>
+          </Link>
+
           <div className="flex items-center gap-3">
             <ThemeToggle />
             {user && (
-              <Link href="/messages" className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition relative">
+              <Link href="/messages" className="relative p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-300 hover:scale-105" title="Мои сообщения">
                 <Mail size={20} />
+                {/* Индикатор можно добавить позже */}
               </Link>
             )}
+
+            {/* Аватар с мягким свечением */}
             {user ? (
-              <Link href={currentUsername ? `/u/${currentUsername}` : '#'} className="block relative ml-1">
-                <img src={userAvatar} className="w-10 h-10 rounded-2xl object-cover border border-border hover:border-primary transition duration-300" onError={(e) => e.currentTarget.src = PLACEHOLDER_IMG} />
+              <Link href={currentUsername ? `/u/${currentUsername}` : '#'} className="block relative ml-1 group">
+                <div className="absolute -inset-0.5 bg-gradient-to-r from-primary to-blue-400 rounded-2xl opacity-0 group-hover:opacity-50 blur transition duration-500"></div>
+                <img
+                  src={userAvatar}
+                  className="relative w-10 h-10 rounded-2xl object-cover border-2 border-background transition-transform duration-300 group-hover:scale-105"
+                  onError={(e) => e.currentTarget.src = PLACEHOLDER_IMG}
+                />
               </Link>
             ) : (
-              <Link href="/login" className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-xl text-sm font-semibold transition shadow-lg shadow-primary/20">Войти</Link>
+              <Link href="/login" className="bg-gradient-to-r from-primary to-blue-600 hover:opacity-90 text-white px-5 py-2 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-primary/20 hover:shadow-primary/40 hover:-translate-y-0.5">
+                Войти
+              </Link>
             )}
           </div>
         </div>
       </header>
 
-      <main className="max-w-xl mx-auto p-4">
+      <main className="max-w-xl mx-auto p-4 space-y-6">
 
-        {/* --- ВИДЖЕТ СОЗДАНИЯ ПОСТА --- */}
-        {/* Заменили огромный кусок кода на одну строку */}
+        {/* Create Widget */}
         {user && (
-          <CreatePostWidget onPostCreated={() => fetchPosts(user)} />
+          <div className="animate-in fade-in slide-in-from-top-4 duration-500">
+            <CreatePostWidget onPostCreated={() => fetchPosts(user)} />
+          </div>
         )}
 
-        {/* --- ЛЕНТА --- */}
-        <div className="space-y-4">
-          {posts.map((post) => (
-            <div key={post.id} className="bg-card border border-border p-5 rounded-3xl hover:border-muted-foreground/30 transition duration-300 shadow-sm relative group">
+        {/* FEED */}
+        <div className="space-y-6">
+          {posts.map((post, index) => (
+            <div
+              key={post.id}
+              className="bg-card border border-border/60 p-6 rounded-3xl shadow-sm hover:shadow-md hover:border-primary/20 transition-all duration-300 group relative animate-in fade-in slide-in-from-bottom-4 fill-mode-backwards"
+              style={{ animationDelay: `${index * 50}ms` }}
+            >
 
+              {/* Header карточки */}
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3">
-                  <Link href={`/u/${post.profiles?.username}`} className="group block">
-                    <div className="w-10 h-10 rounded-2xl overflow-hidden bg-muted border border-border group-hover:border-primary transition duration-300">
+                  <Link href={`/u/${post.profiles?.username}`} className="group/avatar block relative">
+                    <div className="w-11 h-11 rounded-2xl overflow-hidden bg-muted border border-border group-hover/avatar:border-primary/50 transition-all duration-300">
                       <img
                         src={post.profiles?.avatar_url || PLACEHOLDER_IMG}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover transform group-hover/avatar:scale-110 transition-transform duration-500"
                         onError={(e) => e.currentTarget.src = PLACEHOLDER_IMG}
                       />
                     </div>
                   </Link>
                   <div>
-                    <Link href={`/u/${post.profiles?.username}`} className="font-bold text-sm text-foreground hover:text-primary transition">
+                    <Link href={`/u/${post.profiles?.username}`} className="font-bold text-[15px] text-foreground hover:text-primary transition-colors">
                       {post.profiles?.username || 'User'}
                     </Link>
-                    <p className="text-xs text-muted-foreground">{new Date(post.created_at).toLocaleDateString()}</p>
+                    <p className="text-xs text-muted-foreground font-medium mt-0.5">
+                      {new Date(post.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+                    </p>
                   </div>
                 </div>
 
-                {/* КНОПКА УДАЛЕНИЯ (Теперь через Action) */}
                 {user && user.id === post.profiles?.id && (
                   <button
                     onClick={() => deletePost(post.id)}
-                    className="p-2 rounded-xl hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition"
+                    className="p-2 rounded-xl text-muted-foreground/50 hover:text-red-500 hover:bg-red-500/5 transition-all opacity-0 group-hover:opacity-100"
                   >
-                    <Trash2 size={16} />
+                    <Trash2 size={18} />
                   </button>
                 )}
               </div>
 
               {/* Контент */}
-              <div className="mb-5 text-foreground leading-relaxed pl-1">
+              <div className="mb-4 text-foreground/90 leading-relaxed text-[15px] pl-1">
                 <ExpandableContent content={post.content} />
               </div>
 
-              {/* Картинка */}
+              {/* Картинка (Modern Card Style) */}
               {post.image_url && (
-                <div className="mb-5 rounded-2xl overflow-hidden border border-border bg-muted">
-                  <img src={post.image_url} className="w-full h-auto max-h-96 object-cover" />
+                <div className="mb-5 rounded-2xl overflow-hidden border border-border/50 bg-muted/30 shadow-inner">
+                  <img src={post.image_url} className="w-full h-auto max-h-[500px] object-cover hover:scale-[1.01] transition-transform duration-500" />
                 </div>
               )}
 
-              {/* Футер поста (Лайки, Комменты) */}
-              <div className="flex gap-4">
+              {/* Actions Bar */}
+              <div className="flex gap-2 pt-2">
                 <button
                   onClick={() => toggleLike(post.id, post.is_liked)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition duration-300 ${post.is_liked ? 'bg-red-500/10 text-red-500' : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'}`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 active:scale-95 ${post.is_liked
+                      ? 'bg-red-500/10 text-red-500'
+                      : 'bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }`}
                 >
                   <Heart size={18} className={post.is_liked ? "fill-current" : ""} />
-                  {post.likes_count}
+                  <span>{post.likes_count > 0 && post.likes_count}</span>
                 </button>
 
                 <button
                   onClick={() => toggleComments(post.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition duration-300 ${post.show_comments ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'}`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 active:scale-95 ${post.show_comments
+                      ? 'bg-primary/10 text-primary'
+                      : 'bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }`}
                 >
                   <MessageCircle size={18} />
-                  {post.comments_count > 0 ? post.comments_count : 'Коммент'}
+                  <span>{post.comments_count > 0 && post.comments_count}</span>
                 </button>
               </div>
 
-              {/* Секция комментариев */}
+              {/* Комментарии */}
               {post.show_comments && (
-                <div className="mt-4 pt-4 border-t border-border animate-in slide-in-from-top-2 fade-in duration-200">
-                  <div className="space-y-3 mb-4 max-h-64 overflow-y-auto custom-scrollbar">
+                <div className="mt-4 pt-4 border-t border-border/50 animate-in slide-in-from-top-2 fade-in duration-300">
+                  <div className="space-y-3 mb-4 max-h-64 overflow-y-auto custom-scrollbar pr-2">
                     {post.comments?.length > 0 ? post.comments.map(comment => (
-                      <div key={comment.id} className="flex gap-3 bg-muted/50 p-3 rounded-2xl border border-border">
+                      <div key={comment.id} className="flex gap-3 p-2 rounded-2xl hover:bg-muted/50 transition-colors">
                         <img
                           src={comment.profiles?.avatar_url || PLACEHOLDER_IMG}
-                          className="w-8 h-8 rounded-xl object-cover mt-0.5"
+                          className="w-8 h-8 rounded-xl object-cover mt-1"
                           onError={(e) => e.currentTarget.src = PLACEHOLDER_IMG}
                         />
                         <div className="text-sm w-full">
                           <span className="font-bold mr-2 text-xs text-primary block mb-0.5">{comment.profiles.username}</span>
-                          <span className="text-foreground/90">{comment.content}</span>
+                          <span className="text-foreground/80 leading-relaxed">{comment.content}</span>
                         </div>
                       </div>
                     )) : (
-                      <p className="text-center text-muted-foreground text-sm py-2">Здесь пока пусто.</p>
+                      <p className="text-center text-muted-foreground text-sm py-4 italic">Нет комментариев</p>
                     )}
                   </div>
 
-                  <div className="relative">
+                  <div className="relative flex items-center gap-2">
                     <input
                       value={commentInputs[post.id] || ''}
                       onChange={(e) => setCommentInputs({ ...commentInputs, [post.id]: e.target.value })}
                       placeholder="Написать ответ..."
-                      className="w-full bg-muted text-foreground text-sm p-3 pr-10 rounded-xl border border-transparent focus:border-primary/50 focus:bg-background focus:outline-none transition"
+                      className="flex-grow bg-muted/50 hover:bg-muted focus:bg-background text-foreground text-sm p-3 rounded-xl border border-transparent focus:border-primary/30 focus:ring-4 focus:ring-primary/5 focus:outline-none transition-all"
                       onKeyDown={(e) => e.key === 'Enter' && sendComment(post.id)}
                     />
                     <button
                       onClick={() => sendComment(post.id)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-primary rounded-lg text-primary-foreground hover:bg-primary/90 transition"
+                      className="p-3 bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition shadow-lg shadow-primary/20 active:scale-90"
                     >
-                      <Send size={14} />
+                      <Send size={16} />
                     </button>
                   </div>
                 </div>

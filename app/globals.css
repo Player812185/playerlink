@@ -4,52 +4,91 @@
 
 @layer base {
   :root {
-    /* СВЕТЛАЯ ТЕМА (Light Mode) */
-    --background: #f8fafc;
-    /* Очень светло-серый фон */
-    --foreground: #0f172a;
-    /* Темно-синий текст */
+    /* Светлая тема */
+    --background: #fafafa;
+    --foreground: #18181b;
+    /* Zinc-900 */
+
     --card: #ffffff;
-    /* Белые карточки */
-    --card-foreground: #0f172a;
-    --border: #e2e8f0;
-    /* Светлые границы */
-    --primary: #2563eb;
-    /* Синий акцент */
+    --card-foreground: #18181b;
+
+    --popover: #ffffff;
+    --popover-foreground: #18181b;
+
+    --primary: #3b82f6;
+    /* Blue-500 */
     --primary-foreground: #ffffff;
-    --muted: #f1f5f9;
-    /* Для кнопок и фонов */
-    --muted-foreground: #64748b;
-    /* Серый текст */
+
+    --secondary: #f4f4f5;
+    /* Zinc-100 */
+    --secondary-foreground: #18181b;
+
+    --muted: #f4f4f5;
+    --muted-foreground: #71717a;
+    /* Zinc-500 */
+
+    --accent: #f4f4f5;
+    --accent-foreground: #18181b;
+
+    --destructive: #ef4444;
+    --destructive-foreground: #ffffff;
+
+    --border: #e4e4e7;
+    /* Zinc-200 */
+    --input: #e4e4e7;
+    --ring: #3b82f6;
+
+    --radius: 1rem;
+    /* rounded-2xl */
   }
 
   .dark {
-    /* ТЕМНАЯ ТЕМА (Cobalt / Aeza Style) */
-    --background: #0b0e14;
-    /* Твой глубокий фон */
-    --foreground: #e2e8f0;
-    /* Светлый текст */
-    --card: #151a23;
-    /* Карточки чуть светлее */
-    --card-foreground: #e2e8f0;
-    --border: #2d3748;
-    /* Границы (чуть заметные) */
+    /* Темная тема (твой запрос) */
+    --background: #0a0a0f;
+    --foreground: #e4e4e7;
+    /* Zinc-200 */
+
+    --card: #141419;
+    --card-foreground: #e4e4e7;
+
+    --popover: #141419;
+    --popover-foreground: #e4e4e7;
+
     --primary: #3b82f6;
-    /* Яркий синий */
     --primary-foreground: #ffffff;
-    --muted: #1e293b;
-    --muted-foreground: #94a3b8;
+
+    --secondary: #27272a;
+    /* Zinc-800 */
+    --secondary-foreground: #e4e4e7;
+
+    --muted: #1e1e24;
+    /* Чуть темнее карточки */
+    --muted-foreground: #a1a1aa;
+    /* Zinc-400 */
+
+    --accent: #27272a;
+    --accent-foreground: #e4e4e7;
+
+    --destructive: #7f1d1d;
+    --destructive-foreground: #e4e4e7;
+
+    --border: #27272a;
+    --input: #27272a;
+    --ring: #1d4ed8;
   }
 }
 
-body {
-  background-color: var(--background);
-  color: var(--foreground);
-  transition: background-color 0.3s ease, color 0.3s ease;
-  /* Плавный переход */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-primary/20 selection:text-primary;
+  }
 }
 
-/* Скроллбар */
+/* Custom Scrollbar for minimalistic look */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -59,13 +98,25 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--muted-foreground);
+  background: var(--border);
   border-radius: 10px;
-  opacity: 0.5;
 }
 
-/* Эффект исчезновения текста */
-.mask-fade-bottom {
-  -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
-  mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Utilities for Glassmorphism */
+@layer utilities {
+  .glass {
+    @apply bg-background/80 backdrop-blur-xl border-b border-border/50;
+  }
+
+  .glass-card {
+    @apply bg-card/50 backdrop-blur-md border border-white/5;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400;
+  }
 }

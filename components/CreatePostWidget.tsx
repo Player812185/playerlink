@@ -1,8 +1,8 @@
 'use client'
 import { useState, useRef } from 'react'
-import { supabase } from '@/utils/supabase' // Клиент для загрузки файлов
-import { createPostAction } from '@/app/actions/feed' // Твой Server Action
-import { Send, Paperclip, X, Image as ImageIcon, Loader2 } from 'lucide-react'
+import { supabase } from '@/utils/supabase'
+import { createPostAction } from '@/app/actions/feed'
+import { Send, Paperclip, X, Loader2, Image as ImageIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface Props {
@@ -14,6 +14,7 @@ export function CreatePostWidget({ onPostCreated }: Props) {
     const [file, setFile] = useState<File | null>(null)
     const [previewUrl, setPreviewUrl] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
+    const [isFocused, setIsFocused] = useState(false) // Для анимации фокуса
     const fileInputRef = useRef<HTMLInputElement>(null)
 
     // --- ЛОГИКА ВСТАВКИ ИЗ БУФЕРА (PASTE) ---
@@ -85,50 +86,46 @@ export function CreatePostWidget({ onPostCreated }: Props) {
     }
 
     return (
-        <div className="mb-6 bg-card p-4 rounded-3xl border border-border shadow-sm">
+        <div className={`bg-card p-4 rounded-3xl border transition-all duration-300 ${isFocused ? 'border-primary/40 shadow-lg ring-4 ring-primary/5' : 'border-border shadow-sm'}`}>
             <div className="flex gap-3 items-start">
                 <div className="flex-grow space-y-3">
                     <textarea
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
-                        onPaste={handlePaste} // <--- СЛУШАЕМ ВСТАВКУ
-                        placeholder="Что нового? (Можно вставить картинку Ctrl+V)"
-                        className="w-full bg-transparent text-foreground p-2 min-h-[80px] resize-none focus:outline-none placeholder-muted-foreground"
+                        onPaste={handlePaste}
+                        onFocus={() => setIsFocused(true)}
+                        onBlur={() => setIsFocused(false)}
+                        placeholder="Что нового?"
+                        className="w-full bg-transparent text-foreground p-1 min-h-[50px] resize-none focus:outline-none placeholder-muted-foreground text-lg leading-relaxed"
                         onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() } }}
                         disabled={loading}
                     />
 
-                    {/* Превью картинки */}
                     {previewUrl && (
-                        <div className="relative inline-block group">
-                            <img src={previewUrl} className="h-24 w-auto rounded-xl border border-border object-cover" />
-                            <button onClick={clearFile} className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full shadow-md hover:bg-red-600 transition">
-                                <X size={12} />
+                        <div className="relative inline-block group animate-in fade-in zoom-in duration-200">
+                            <img src={previewUrl} className="h-32 w-auto rounded-2xl border border-border object-cover" />
+                            <button onClick={clearFile} className="absolute -top-2 -right-2 bg-black/50 backdrop-blur text-white p-1.5 rounded-full hover:bg-red-500 transition">
+                                <X size={14} />
                             </button>
                         </div>
                     )}
                 </div>
+            </div>
 
-                <div className="flex flex-col gap-2">
-                    <button
-                        onClick={handleSubmit}
-                        disabled={loading || (!content.trim() && !file)}
-                        className="bg-primary hover:bg-primary/90 text-primary-foreground p-4 rounded-2xl transition shadow-lg shadow-primary/20 flex items-center justify-center aspect-square disabled:opacity-50"
-                    >
-                        {loading ? <Loader2 className="animate-spin" /> : <Send size={20} />}
-                    </button>
+            <div className="flex justify-between items-center mt-3 pt-3 border-t border-border/50">
+                <label className="text-primary hover:bg-primary/10 p-2.5 rounded-xl transition cursor-pointer flex items-center gap-2 text-sm font-medium">
+                    <ImageIcon size={20} />
+                    <span className="hidden sm:inline">Фото</span>
+                    <input type="file" accept="image/*" className="hidden" onChange={handleFileSelect} ref={fileInputRef} />
+                </label>
 
-                    <label className="bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground p-4 rounded-2xl transition cursor-pointer flex items-center justify-center aspect-square">
-                        <Paperclip size={20} />
-                        <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={handleFileSelect}
-                            ref={fileInputRef}
-                        />
-                    </label>
-                </div>
+                <button
+                    onClick={handleSubmit}
+                    disabled={loading || (!content.trim() && !file)}
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg shadow-primary/20 hover:shadow-primary/40 disabled:opacity-50 disabled:shadow-none flex items-center gap-2"
+                >
+                    {loading ? <Loader2 className="animate-spin w-5 h-5" /> : <>Опубликовать <Send size={16} /></>}
+                </button>
             </div>
         </div>
     )
