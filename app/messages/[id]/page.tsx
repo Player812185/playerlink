@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3 } from 'lucide-react'
+import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown } from 'lucide-react'
 import { RealtimeChannel } from '@supabase/supabase-js'
 
 type Message = {
@@ -55,7 +55,33 @@ export default function ChatPage() {
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
     const scrollRef = useRef<HTMLDivElement>(null)
+
+    const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTo({
+                top: scrollRef.current.scrollHeight,
+                behavior
+            })
+            setShowScrollButton(false)
+        }
+    }
+
+    const handleScroll = () => {
+        if (!scrollRef.current) return
+        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
+
+        // Считаем, что мы "внизу", если до конца меньше 100px
+        const bottomThreshold = 100
+        const isBottom = scrollHeight - scrollTop - clientHeight < bottomThreshold
+
+        setIsNearBottom(isBottom)
+        setShowScrollButton(!isBottom)
+    }
+
     const fileInputRef = useRef<HTMLInputElement>(null)
+
+    const [showScrollButton, setShowScrollButton] = useState(false)
+    const [isNearBottom, setIsNearBottom] = useState(true)
 
     // Генератор ID комнаты
     const getRoomId = (userId1: string, userId2: string) => {
@@ -150,7 +176,17 @@ export default function ChatPage() {
     }, [partnerId])
 
     useEffect(() => {
-        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        const lastMsg = messages[messages.length - 1]
+        const isMyMessage = lastMsg?.sender_id === currentUser?.id
+
+        // Скроллим если:
+        // 1. Сообщение мое (всегда)
+        // 2. Я уже был внизу (читаю новые)
+        // 3. Это первый рендер (нет сообщений или только загрузились)
+        if (isMyMessage || isNearBottom) {
+            // 'auto' для первого рендера, чтобы не мелькало, 'smooth' для новых сообщений
+            scrollToBottom(messages.length === 0 ? 'auto' : 'smooth')
+        }
     }, [messages, replyTo, filePreviews, isRecording, isTyping])
 
     // Периодическое обновление статуса (каждые 30 сек пересчитываем "минуты назад")
@@ -386,13 +422,13 @@ export default function ChatPage() {
 
     return (
         <div
-            className={`flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border ${
-                isDragOver ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''
-            }`}
+            className={`flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border relative ${isDragOver ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''
+                }`}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
         >
+            {/* --- HEADER --- */}
             <div className="flex items-center gap-4 p-4 border-b border-border bg-card shadow-sm z-10">
                 <Link href="/messages" className="text-muted-foreground hover:text-foreground"><ArrowLeft /></Link>
                 {partnerProfile ? (
@@ -411,7 +447,12 @@ export default function ChatPage() {
                 ) : <span>Загрузка...</span>}
             </div>
 
-            <div className="flex-grow overflow-y-auto p-4 space-y-1 bg-background" ref={scrollRef}>
+            {/* --- MESSAGES LIST --- */}
+            <div
+                className="flex-grow overflow-y-auto p-4 space-y-1 bg-background"
+                ref={scrollRef}
+                onScroll={handleScroll} // <--- ВАЖНО: Обработчик скролла
+            >
                 {messages.map((msg) => {
                     const isMe = msg.sender_id === currentUser?.id
                     const replyMsg = messages.find(m => m.id === msg.reply_to_id)
@@ -505,7 +546,20 @@ export default function ChatPage() {
                 })}
             </div>
 
-            <div className="p-3 bg-card border-t border-border">
+            {/* --- КНОПКА СКРОЛЛА (Floating) --- */}
+            {showScrollButton && (
+                <div className="absolute bottom-24 right-4 z-20 md:right-8">
+                    <button
+                        onClick={() => scrollToBottom()}
+                        className="bg-card/80 backdrop-blur text-primary border border-border p-3 rounded-full shadow-lg hover:bg-card transition animate-in fade-in zoom-in duration-200"
+                    >
+                        <ChevronDown size={24} />
+                    </button>
+                </div>
+            )}
+
+            {/* --- INPUT AREA --- */}
+            <div className="p-3 bg-card border-t border-border z-20">
                 {replyTo && <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]"><div className="text-sm border-l-2 border-primary pl-2"><span className="text-primary font-bold block">Ответ</span><span className="text-muted-foreground text-xs truncate max-w-[200px] block">{replyTo.content || '[Вложение]'}</span></div><button onClick={() => setReplyTo(null)}><X size={16} /></button></div>}
                 {files.length > 0 && (
                     <div className="flex items-center justify-between bg-muted/50 p-2 px-4 rounded-t-xl border-x border-t border-border mb-[-1px]">
@@ -565,13 +619,13 @@ export default function ChatPage() {
                             >
                                 Отмена
                             </button>
-                        <button
-                            onClick={saveEdit}
-                            className="bg-primary text-primary-foreground px-4 py-2 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] flex items-center justify-center text-sm font-semibold"
-                        >
-                            Сохранить
-                        </button>
-                    </div>
+                            <button
+                                onClick={saveEdit}
+                                className="bg-primary text-primary-foreground px-4 py-2 rounded-xl hover:bg-primary/90 transition shadow-lg h-[50px] flex items-center justify-center text-sm font-semibold"
+                            >
+                                Сохранить
+                            </button>
+                        </div>
                     ) : newMessage.trim() || files.length > 0 ? (
                         <button
                             onClick={() => sendMessage()}
@@ -582,9 +636,8 @@ export default function ChatPage() {
                     ) : (
                         <button
                             onClick={isRecording ? stopRecording : startRecording}
-                            className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${
-                                isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'
-                            }`}
+                            className={`p-3 rounded-xl transition shadow-lg h-[50px] aspect-square flex items-center justify-center ${isRecording ? 'bg-red-500 text-white' : 'bg-muted text-muted-foreground hover:text-primary'
+                                }`}
                         >
                             {isRecording ? <Send size={20} /> : <Mic size={20} />}
                         </button>
