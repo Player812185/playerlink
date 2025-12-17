@@ -18,6 +18,8 @@ type Message = {
     created_at: string
     updated_at?: string
     is_read: boolean
+    isOptimistic?: boolean
+    isError?: boolean
 }
 
 // Хелпер проверки онлайна (2 минуты запас)
@@ -123,6 +125,12 @@ export default function ChatPage() {
                         // Проверка: сообщение принадлежит этому чату
                         if ((msg.sender_id === partnerId && msg.receiver_id === user.id) ||
                             (msg.sender_id === user.id && msg.receiver_id === partnerId)) {
+
+                            setMessages((prev) => {
+                                // Если сообщение уже есть (например, мы его добавили сами после ответа API), не дублируем
+                                if (prev.some(m => m.id === msg.id)) return prev
+                                return [...prev, msg]
+                            })
 
                             setMessages((prev) => [...prev, msg])
 
@@ -314,13 +322,39 @@ export default function ChatPage() {
         const fileToSend = overrideFile || files[0]
         const textToSend = type === 'audio' ? '' : newMessage
         const hasAnyFiles = overrideFile ? true : files.length > 0
+
         if ((!textToSend.trim() && !hasAnyFiles) || !currentUser) return
 
+        // 1. Генерируем временный ID и объект сообщения
+        const tempId = `temp-${Date.now()}`
+        const optimisticMsg: Message = {
+            id: tempId,
+            content: textToSend,
+            sender_id: currentUser.id,
+            receiver_id: partnerId as string,
+            created_at: new Date().toISOString(),
+            is_read: false,
+            reply_to_id: replyTo?.id || null,
+            file_url: null, // Пока без превью файлов для простоты (или можно добавить blob url)
+            isOptimistic: true // Флаг для UI
+        }
+
+        // 2. СРАЗУ показываем его в чате (только если это текст, с файлами сложнее)
+        if (!hasAnyFiles) {
+            setMessages(prev => [...prev, optimisticMsg])
+            setNewMessage('') // Очищаем поле ввода мгновенно
+            setReplyTo(null)
+            // Скроллим вниз (используем нашу новую функцию)
+            setTimeout(() => scrollToBottom(), 10)
+        }
+
+        // 3. Логика загрузки файлов (без изменений, просто копируем старую логику сюда)
         let uploadedUrl: string | null = null
         let uploadedUrls: string[] = []
         let fileNames: string[] = []
 
         if (overrideFile) {
+            // ... (твой старый код загрузки одного файла)
             const ext = overrideFile.name.split('.').pop()
             const path = `${currentUser.id}-${Date.now()}.${ext}`
             const { error } = await supabase.storage.from('chat-attachments').upload(path, overrideFile)
@@ -331,6 +365,7 @@ export default function ChatPage() {
                 fileNames = [overrideFile.name]
             }
         } else if (files.length > 0) {
+            // ... (твой старый код загрузки массива файлов)
             for (const f of files) {
                 const ext = f.name.split('.').pop()
                 const path = `${currentUser.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
@@ -344,32 +379,55 @@ export default function ChatPage() {
             uploadedUrl = uploadedUrls[0] || null
         }
 
-        const { error } = await supabase.from('messages').insert({
+        // 4. Отправляем в базу
+        const { data: realMsgData, error } = await supabase.from('messages').insert({
             sender_id: currentUser.id,
             receiver_id: partnerId,
             content: textToSend,
             file_url: uploadedUrl,
             file_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
             file_names: fileNames.length > 0 ? fileNames : null,
-            reply_to_id: replyTo?.id || null
-        })
+            reply_to_id: optimisticMsg.reply_to_id
+        }).select().single() // <--- ВАЖНО: Добавляем .select().single(), чтобы получить реальный ID
 
-        if (!error && type !== 'audio') {
-            const hasFiles = overrideFile ? true : files.length > 0
-            fetch('/api/send-push', {
-                method: 'POST',
-                body: JSON.stringify({
-                    receiverId: partnerId,
-                    message: hasFiles ? (hasAnyFiles ? 'Файл' : textToSend) : textToSend,
-                    senderName: myProfile?.username
+        // 5. Обрабатываем результат
+        if (error) {
+            console.error('Ошибка отправки', error)
+            if (!hasAnyFiles) {
+                // Помечаем сообщение как ошибочное
+                setMessages(prev => prev.map(m => m.id === tempId ? { ...m, isOptimistic: false, isError: true } : m))
+            } else {
+                alert('Ошибка отправки сообщения')
+            }
+        } else {
+            // Успех!
+            if (!hasAnyFiles) {
+                // Заменяем временное сообщение на реальное из базы
+                setMessages(prev => prev.map(m => m.id === tempId ? (realMsgData as Message) : m))
+            } else {
+                // Если были файлы (мы их не добавляли оптимистично), добавляем сейчас
+                // Хотя Realtime скорее всего это уже сделал, но для надежности можно так:
+                // setMessages(prev => [...prev, realMsgData as Message]) 
+                // Но лучше оставить очистку:
+                setNewMessage('')
+                setFiles([])
+                setFilePreviews([])
+                setReplyTo(null)
+                if (fileInputRef.current) fileInputRef.current.value = ''
+            }
+
+            // Push уведомление (как и было)
+            if (type !== 'audio') {
+                fetch('/api/send-push', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        receiverId: partnerId,
+                        message: hasAnyFiles ? 'Файл' : textToSend,
+                        senderName: myProfile?.username
+                    })
                 })
-            })
+            }
         }
-        setNewMessage('')
-        setFiles([])
-        setFilePreviews([])
-        setReplyTo(null)
-        if (fileInputRef.current) fileInputRef.current.value = ''
     }
 
     const deleteMessage = async (msg: Message) => {
@@ -463,9 +521,13 @@ export default function ChatPage() {
                         ? msg.file_names
                         : null
                     const isEdited = msg.updated_at && msg.updated_at !== msg.created_at
+                    const isOptimistic = msg.isOptimistic
+                    const isError = msg.isError
+
                     return (
-                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-4`}>
-                            <div className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border ${isMe ? 'bg-primary text-primary-foreground rounded-br-none border-transparent' : 'bg-muted text-foreground rounded-bl-none border-border'}`}>
+                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group mb-4 ${isOptimistic ? 'opacity-70' : ''}`}>
+                            <div className={`relative max-w-[85%] p-3 rounded-2xl shadow-sm border 
+            ${isError ? 'bg-red-500/10 border-red-500 text-red-500' : isMe ? 'bg-primary text-primary-foreground rounded-br-none border-transparent' : 'bg-muted text-foreground rounded-bl-none border-border'}`}>
                                 {replyMsg && (
                                     <div className={`mb-2 text-xs border-l-2 pl-2 py-1 opacity-80 ${isMe ? 'border-white/50' : 'border-primary'}`}>
                                         <span className="font-bold block">
@@ -527,7 +589,13 @@ export default function ChatPage() {
                                         {isEdited && <span className="ml-1 text-[10px] opacity-70">(изменено)</span>}
                                     </p>
                                 )}
-                                <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${isMe ? 'text-white/70' : 'text-muted-foreground'}`}><span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>{isMe && <span>{msg.is_read ? <CheckCheck size={14} /> : <Check size={14} />}</span>}</div>
+                                <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${isMe ? 'text-white/70' : 'text-muted-foreground'}`}>
+                                    <span>
+                                        {isOptimistic ? 'Отправка...' : new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                    {isMe && !isOptimistic && !isError && <span>{msg.is_read ? <CheckCheck size={14} /> : <Check size={14} />}</span>}
+                                    {isError && <span title="Ошибка">⚠️</span>}
+                                </div>
                                 <div className={`absolute top-0 ${isMe ? '-left-16' : '-right-16'} h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
                                     <button onClick={() => setReplyTo(msg)} className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary shadow-sm"><Reply size={14} /></button>
                                     {isMe && !msg.file_url && (
