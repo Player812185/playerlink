@@ -5,64 +5,73 @@
 @layer base {
   :root {
     /* Светлая тема */
-    --background: 0 0% 98%;      /* #fafafa */
-    --foreground: 240 5% 10%;    /* #18181b */
-    
-    --card: 0 0% 100%;           /* #ffffff */
+    --background: 0 0% 98%;
+    /* #fafafa */
+    --foreground: 240 5% 10%;
+    /* #18181b */
+
+    --card: 0 0% 100%;
+    /* #ffffff */
     --card-foreground: 240 5% 10%;
-    
+
     --popover: 0 0% 100%;
     --popover-foreground: 240 5% 10%;
-    
-    --primary: 221 96% 60%;      /* #3b82f6 */
+
+    --primary: 221 96% 60%;
+    /* #3b82f6 */
     --primary-foreground: 0 0% 100%;
-    
+
     --secondary: 240 5% 96%;
     --secondary-foreground: 240 5% 10%;
-    
+
     --muted: 240 5% 96%;
     --muted-foreground: 240 4% 46%;
-    
+
     --accent: 240 5% 96%;
     --accent-foreground: 240 5% 10%;
-    
+
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    
+
     --border: 240 6% 90%;
     --input: 240 6% 90%;
     --ring: 221 96% 60%;
-    
+
     --radius: 1rem;
   }
 
   .dark {
     /* Темная тема (Neo-Glass) */
-    --background: 240 10% 4%;    /* #0a0a0f */
-    --foreground: 0 0% 95%;      /* #e4e4e7 */
-    
-    --card: 240 10% 9%;          /* #141419 */
+    --background: 240 10% 4%;
+    /* #0a0a0f */
+    --foreground: 0 0% 95%;
+    /* #e4e4e7 */
+
+    --card: 240 10% 9%;
+    /* #141419 */
     --card-foreground: 0 0% 95%;
-    
+
     --popover: 240 10% 9%;
     --popover-foreground: 0 0% 95%;
-    
-    --primary: 221 96% 60%;      /* #3b82f6 */
+
+    --primary: 221 96% 60%;
+    /* #3b82f6 */
     --primary-foreground: 0 0% 100%;
-    
+
     --secondary: 240 4% 16%;
     --secondary-foreground: 0 0% 98%;
-    
+
     --muted: 240 4% 16%;
     --muted-foreground: 240 5% 65%;
-    
+
     --accent: 240 4% 16%;
     --accent-foreground: 0 0% 98%;
-    
+
     --destructive: 0 63% 31%;
     --destructive-foreground: 0 0% 98%;
-    
-    --border: 240 4% 16%;        /* #27272a */
+
+    --border: 240 4% 16%;
+    /* #27272a */
     --input: 240 4% 16%;
     --ring: 221 96% 60%;
   }
@@ -72,6 +81,7 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary/20 selection:text-primary;
   }
@@ -81,12 +91,15 @@
 ::-webkit-scrollbar {
   width: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   @apply bg-border rounded-full;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-muted-foreground/50;
 }
@@ -96,7 +109,7 @@
   .glass {
     @apply bg-background/80 backdrop-blur-xl border-b border-border/50;
   }
-  
+
   .glass-card {
     @apply bg-card/50 backdrop-blur-md border border-white/5;
   }
@@ -104,4 +117,8 @@
   .text-gradient {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400;
   }
+}
+
+.mirror-mode {
+  transform: scaleX(-1);
 }

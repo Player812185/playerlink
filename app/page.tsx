@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/utils/supabase'
-import { Heart, MessageCircle, Trash2, Mail, Sparkles, Send } from 'lucide-react'
+import { Heart, MessageCircle, Trash2, Mail, Send } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -187,9 +187,6 @@ export default function Home() {
 
           {/* Logo with Gradient */}
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="bg-primary/10 p-2 rounded-xl group-hover:scale-110 transition-transform duration-300">
-              <Sparkles className="text-primary w-5 h-5" />
-            </div>
             <h1 className="text-xl font-bold tracking-tight text-gradient">
               Playerlink
             </h1>
@@ -290,8 +287,8 @@ export default function Home() {
                 <button
                   onClick={() => toggleLike(post.id, post.is_liked)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 active:scale-95 ${post.is_liked
-                      ? 'bg-red-500/10 text-red-500'
-                      : 'bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
+                    ? 'bg-red-500/10 text-red-500'
+                    : 'bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                 >
                   <Heart size={18} className={post.is_liked ? "fill-current" : ""} />
@@ -301,8 +298,8 @@ export default function Home() {
                 <button
                   onClick={() => toggleComments(post.id)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 active:scale-95 ${post.show_comments
-                      ? 'bg-primary/10 text-primary'
-                      : 'bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
+                    ? 'bg-primary/10 text-primary'
+                    : 'bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                 >
                   <MessageCircle size={18} />

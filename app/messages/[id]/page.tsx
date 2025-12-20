@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/utils/supabase'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown, Loader2, Copy } from 'lucide-react'
+import { ArrowLeft, Send, Paperclip, X, Reply, Trash2, FileText, Mic, Square, Check, CheckCheck, Edit3, ChevronDown, Loader2, Copy, Video, Phone } from 'lucide-react'
 import { RealtimeChannel } from '@supabase/supabase-js'
 import { toast } from 'sonner'
 import {
@@ -13,6 +13,7 @@ import {
     deleteMessageAction,
     editMessageAction
 } from '@/app/actions/chat'
+import { VideoCall } from '@/components/VideoCall'
 
 type Message = {
     id: string
@@ -71,6 +72,10 @@ export default function ChatPage() {
     const [hasMore, setHasMore] = useState(true) // Есть ли еще старые сообщения?
     const [isLoadingMore, setIsLoadingMore] = useState(false) // Чтобы не спамить запросами
     const LIMIT = 50 // Сколько грузить за раз
+
+    const [isInCall, setIsInCall] = useState(false)
+    const [isCaller, setIsCaller] = useState(false)
+    const [incomingCall, setIncomingCall] = useState(false)
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
@@ -146,69 +151,90 @@ export default function ChatPage() {
             setPartnerProfile(profile)
             setIsPartnerOnline(checkIsOnline(profile?.last_seen))
 
+            // Грузим сообщения (первые 50)
             fetchMessages(0, user.id)
             markMessagesAsRead(user.id)
 
-            // --- КАНАЛ 1: ЧАТ (Сообщения + Тайпинг) ---
+            // --- НАСТРОЙКА REALTIME КАНАЛА ---
             const roomId = getRoomId(user.id, partnerId as string)
 
-            // Отписываемся от старых каналов, если были
             if (channelRef.current) supabase.removeChannel(channelRef.current)
 
             channelRef.current = supabase.channel(`room:${roomId}`, {
-                config: { broadcast: { self: true } } // self: true чтобы видеть и свои сообщения сразу через сокет
+                config: { broadcast: { self: true } }
             })
 
             channelRef.current
+                // 1. Слушаем сообщения (INSERT)
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
-                    // Новое сообщение
                     if (payload.eventType === 'INSERT') {
                         const msg = payload.new as Message
-
-                        // Проверка: сообщение принадлежит этому чату
+                        // Проверка на чат
                         if ((msg.sender_id === partnerId && msg.receiver_id === user.id) ||
                             (msg.sender_id === user.id && msg.receiver_id === partnerId)) {
 
                             setMessages((prev) => {
-                                // Ищем, есть ли уже сообщение с таким ID (наше оптимистичное)
+                                // Защита от дублей (если оптимистичное уже есть)
                                 const exists = prev.find(m => m.id === msg.id)
-
                                 if (exists) {
-                                    // Если есть — обновляем его (убираем флаг isOptimistic, обновляем время от сервера)
                                     return prev.map(m => m.id === msg.id ? { ...m, ...msg, isOptimistic: false } : m)
                                 }
-
-                                // Если нет — добавляем новое
                                 return [...prev, msg]
                             })
 
-                            // Звук только для входящих
                             if (msg.sender_id === partnerId) {
                                 markMessagesAsRead(user.id)
                                 try { new Audio('/notify.mp3').play() } catch (e) { }
                             }
                         }
                     }
-                    // Удаление
+                    // Обработка DELETE и UPDATE (можно оставить старую логику или скопировать)
                     if (payload.eventType === 'DELETE') {
                         setMessages((prev) => prev.filter(m => m.id !== payload.old.id))
                     }
-                    // Обновление (прочитано)
                     if (payload.eventType === 'UPDATE') {
-                        setMessages((prev) => prev.map(m => m.id === payload.new.id ? payload.new as Message : m))
+                        setMessages((prev) => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m))
                     }
                 })
+                // 2. Слушаем "Печатает..."
                 .on('broadcast', { event: 'typing' }, (payload) => {
-                    // Игнорируем свои же сигналы
                     if (payload.payload.user_id === partnerId) {
                         setIsTyping(true)
                         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
                         typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000)
                     }
                 })
+                // 3. !!! НОВОЕ: СЛУШАЕМ ВХОДЯЩИЙ ЗВОНОК !!!
+                .on('broadcast', { event: 'call-start' }, (payload) => {
+                    // Игнорируем свои же сигналы (self: true включен)
+                    if (payload.payload.caller_id === user.id) return
+
+                    // Звук звонка (положи ringtone.mp3 в public)
+                    try { new Audio('/ringtone.mp3').play() } catch (e) { }
+
+                    // Показываем уведомление (Toast) с кнопками
+                    toast('Входящий видеозвонок', {
+                        duration: 20000, // Звоним 20 секунд
+                        position: 'top-center',
+                        icon: '📞',
+                        action: {
+                            label: 'Ответить',
+                            onClick: () => {
+                                setIsCaller(false) // Мы принимаем
+                                setIsInCall(true)  // Открываем окно
+                            }
+                        },
+                        cancel: {
+                            label: 'Отклонить',
+                            onClick: () => {
+                                // Можно отправить событие "reject", но пока просто скроем тост
+                            }
+                        },
+                    })
+                })
                 .subscribe()
 
-            // --- КАНАЛ 2: СТАТУС ПАРТНЕРА (Обновление профиля) ---
+            // --- КАНАЛ СТАТУСА (Остается без изменений) ---
             const profileChannel = supabase.channel(`profile:${partnerId}`)
                 .on('postgres_changes', {
                     event: 'UPDATE',
@@ -216,9 +242,8 @@ export default function ChatPage() {
                     table: 'profiles',
                     filter: `id=eq.${partnerId}`
                 }, (payload) => {
-                    const newProfile = payload.new
-                    setPartnerProfile(newProfile)
-                    setIsPartnerOnline(checkIsOnline(newProfile.last_seen))
+                    setPartnerProfile(payload.new)
+                    setIsPartnerOnline(checkIsOnline(payload.new.last_seen))
                 })
                 .subscribe()
 
@@ -538,6 +563,20 @@ export default function ChatPage() {
         setIsDragOver(false)
     }
 
+    const startCall = () => {
+        if (!currentUser || !channelRef.current) return
+
+        // Отправляем сигнал, что мы звоним (передаем caller_id, чтобы не звонить самому себе)
+        channelRef.current.send({
+            type: 'broadcast',
+            event: 'call-start',
+            payload: { caller_id: currentUser.id }
+        })
+
+        setIsCaller(true) // Мы звоним
+        setIsInCall(true) // Открываем интерфейс
+    }
+
     return (
         <div
             className={`flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border relative ${isDragOver ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''
@@ -546,23 +585,74 @@ export default function ChatPage() {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
         >
+            {isInCall && currentUser && (
+                <VideoCall
+                    roomId={getRoomId(currentUser.id, partnerId as string)}
+                    userId={currentUser.id}
+                    isCaller={isCaller}
+                    onEnd={() => setIsInCall(false)}
+                />
+            )}
+
             {/* --- HEADER --- */}
-            <div className="flex items-center gap-4 p-4 border-b border-border bg-card shadow-sm z-10">
-                <Link href="/messages" className="text-muted-foreground hover:text-foreground"><ArrowLeft /></Link>
+            <div className="flex items-center gap-4 p-4 border-b border-border bg-card/80 backdrop-blur-md shadow-sm z-10 sticky top-0">
+                {/* Кнопка Назад */}
+                <Link
+                    href="/messages"
+                    className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                >
+                    <ArrowLeft size={24} />
+                </Link>
+
+                {/* Инфо о собеседнике */}
                 {partnerProfile ? (
-                    <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition">
+                    <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
                         <div className="relative">
-                            <img src={partnerProfile.avatar_url || '/placeholder.png'} className="w-10 h-10 rounded-full object-cover" />
-                            {isPartnerOnline && <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full"></span>}
+                            <img
+                                src={partnerProfile.avatar_url || '/placeholder.png'}
+                                className="w-10 h-10 rounded-full object-cover border border-border"
+                                alt="Avatar"
+                            />
+                            {/* Индикатор онлайна */}
+                            {isPartnerOnline && (
+                                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full shadow-sm animate-in zoom-in duration-300"></span>
+                            )}
                         </div>
+
                         <div className="flex flex-col">
-                            <span className="font-bold leading-none">{partnerProfile.username}</span>
-                            <span className={`text-xs mt-1 transition-colors duration-300 ${isTyping ? 'text-primary font-bold animate-pulse' : isPartnerOnline ? 'text-green-500 font-medium' : 'text-muted-foreground'}`}>
+                            <span className="font-bold leading-none text-foreground text-[15px]">
+                                {partnerProfile.username}
+                            </span>
+                            <span className={`text-xs mt-1 transition-colors duration-300 ${isTyping ? 'text-primary font-bold animate-pulse' :
+                                    isPartnerOnline ? 'text-green-500 font-medium' :
+                                        'text-muted-foreground'
+                                }`}>
                                 {isTyping ? 'Печатает...' : getLastSeenText()}
                             </span>
                         </div>
                     </Link>
-                ) : <span>Загрузка...</span>}
+                ) : (
+                    // Скелетон загрузки
+                    <div className="flex items-center gap-3 animate-pulse">
+                        <div className="w-10 h-10 rounded-full bg-muted"></div>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="w-24 h-3.5 rounded-md bg-muted"></div>
+                            <div className="w-16 h-2.5 rounded-md bg-muted"></div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Распорка */}
+                <div className="flex-grow"></div>
+
+                {/* Кнопка Звонка */}
+                <button
+                    onClick={startCall}
+                    className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-200 active:scale-95"
+                    title="Видеозвонок"
+                >
+                    <Video size={22} />
+                </button>
             </div>
 
             {/* --- MESSAGES LIST --- */}
