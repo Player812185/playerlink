@@ -1,10 +1,9 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '@/utils/supabase'
-import { Mic, MicOff, Video, VideoOff, PhoneOff, User, RefreshCw } from 'lucide-react'
+import { Mic, MicOff, Video, VideoOff, PhoneOff, User } from 'lucide-react'
 import { toast } from 'sonner'
 
-// Используем Google STUN, они надежные
 const STUN_SERVERS = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -23,52 +22,53 @@ interface Props {
 export function VideoCall({ roomId, userId, isCaller, callType, onEnd }: Props) {
     const [isMuted, setIsMuted] = useState(false)
     const [isVideoOff, setIsVideoOff] = useState(callType === 'audio')
-    const [status, setStatus] = useState('Инициализация...')
-    const [logs, setLogs] = useState<string[]>([]) // Логи на экран
+    const [status, setStatus] = useState('Подключение...')
+    const [logs, setLogs] = useState<string[]>([])
 
     const localVideoRef = useRef<HTMLVideoElement>(null)
     const remoteVideoRef = useRef<HTMLVideoElement>(null)
     const peerConnection = useRef<RTCPeerConnection | null>(null)
     const localStream = useRef<MediaStream | null>(null)
     const channel = useRef<any>(null)
+    const offerInterval = useRef<NodeJS.Timeout | null>(null) // <--- Таймер для повтора
 
-    // Хелпер для логов
     const log = (msg: string) => {
         console.log(`[Call ${isCaller ? 'Caller' : 'Receiver'}] ${msg}`)
-        setLogs(prev => [...prev.slice(-4), msg]) // Держим последние 5 логов
+        setLogs(prev => [...prev.slice(-4), msg])
     }
 
     useEffect(() => {
-        log(`Starting call in room: ${roomId}`)
+        log(`Room: ${roomId}`)
         init()
         return () => cleanup()
     }, [])
 
     const init = async () => {
         try {
-            setStatus('Доступ к устройствам...')
+            setStatus('Устройства...')
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: true,
                 video: callType === 'video'
             })
             localStream.current = stream
+
             if (localVideoRef.current && callType === 'video') {
                 localVideoRef.current.srcObject = stream
             }
 
-            setStatus('Создание P2P...')
+            setStatus('Настройка P2P...')
             createPeerConnection()
 
             stream.getTracks().forEach(track => {
                 peerConnection.current?.addTrack(track, stream)
             })
 
-            setStatus('Подключение к серверу...')
+            setStatus('Сигналинг...')
             setupSignaling()
 
         } catch (err: any) {
-            log(`Error: ${err.message}`)
-            toast.error('Ошибка оборудования: ' + err.message)
+            log(`Err: ${err.message}`)
+            toast.error('Ошибка доступа: ' + err.message)
         }
     }
 
@@ -77,14 +77,12 @@ export function VideoCall({ roomId, userId, isCaller, callType, onEnd }: Props) 
 
         peerConnection.current.onicecandidate = (event) => {
             if (event.candidate) {
-                // log('Found ICE candidate, sending...')
                 channel.current?.send({ type: 'broadcast', event: 'ice-candidate', payload: event.candidate })
             }
         }
 
         peerConnection.current.ontrack = (event) => {
-            log('Received remote stream!')
-            setStatus('Подключено')
+            log('Stream received!')
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = event.streams[0]
             }
@@ -92,56 +90,73 @@ export function VideoCall({ roomId, userId, isCaller, callType, onEnd }: Props) 
 
         peerConnection.current.onconnectionstatechange = () => {
             const state = peerConnection.current?.connectionState
-            log(`Connection state: ${state}`)
-            if (state === 'connected') setStatus('Разговор')
-            if (state === 'disconnected' || state === 'failed') {
-                setStatus('Связь прервана')
-                // onEnd() // Пока не закрываем автоматом, чтобы видеть ошибки
+            log(`State: ${state}`)
+            if (state === 'connected') {
+                setStatus('Связь установлена')
+                // Как только соединились — перестаем спамить офферами
+                if (offerInterval.current) clearInterval(offerInterval.current)
             }
+            if (state === 'disconnected') setStatus('Разрыв связи')
         }
     }
 
     const setupSignaling = () => {
         channel.current = supabase.channel(`room:${roomId}`, {
-            config: { broadcast: { self: false } } // self: false, чтобы не ловить свои сигналы
+            config: { broadcast: { self: false } }
         })
 
         channel.current
+            .on('broadcast', { event: 'ready' }, () => {
+                // Собеседник вошел и готов! Если мы Caller, шлем оффер сразу
+                if (isCaller) sendOffer()
+            })
             .on('broadcast', { event: 'sdp-offer' }, async (payload: any) => {
-                log('Received OFFER')
-                if (isCaller) return // Если мы звонили, нам оффер не нужен (конфликт)
+                if (isCaller) return // Игнорируем (мы сами звоним)
+                log('Got OFFER')
 
                 try {
+                    // Если мы уже обрабатываем оффер, не сбрасываем (защита от повторов)
+                    if (peerConnection.current?.signalingState !== 'stable') return
+
                     await peerConnection.current?.setRemoteDescription(new RTCSessionDescription(payload.payload))
                     const answer = await peerConnection.current?.createAnswer()
                     await peerConnection.current?.setLocalDescription(answer)
+
                     log('Sent ANSWER')
                     channel.current.send({ type: 'broadcast', event: 'sdp-answer', payload: answer })
-                } catch (e) { log('Error handling offer: ' + e) }
+                } catch (e) { log('Offer Err: ' + e) }
             })
             .on('broadcast', { event: 'sdp-answer' }, async (payload: any) => {
-                log('Received ANSWER')
+                if (!isCaller) return
+                log('Got ANSWER')
+
                 try {
+                    // Перестаем слать офферы, нам ответили
+                    if (offerInterval.current) clearInterval(offerInterval.current)
+
                     await peerConnection.current?.setRemoteDescription(new RTCSessionDescription(payload.payload))
-                } catch (e) { log('Error handling answer: ' + e) }
+                } catch (e) { log('Answer Err: ' + e) }
             })
             .on('broadcast', { event: 'ice-candidate' }, (payload: any) => {
-                // log('Received ICE candidate')
-                peerConnection.current?.addIceCandidate(new RTCIceCandidate(payload.payload))
-                    .catch(e => { })
+                peerConnection.current?.addIceCandidate(new RTCIceCandidate(payload.payload)).catch(() => { })
             })
             .on('broadcast', { event: 'end-call' }, () => {
-                log('Peer ended call')
                 onEnd()
             })
             .subscribe((status: string) => {
-                log(`Supabase Status: ${status}`)
+                log(`Subscribed: ${status}`)
                 if (status === 'SUBSCRIBED') {
+                    // 1. Сообщаем всем, что мы подключились
+                    channel.current.send({ type: 'broadcast', event: 'ready', payload: {} })
+
+                    // 2. Если мы звоним — начинаем долбить офферами, пока не ответят
                     if (isCaller) {
-                        setStatus('Ожидание ответа...')
-                        sendOffer() // Отправляем оффер сразу
+                        setStatus('Вызов...')
+                        sendOffer()
+                        // Повторяем каждые 2 сек, пока не получим ANSWER
+                        offerInterval.current = setInterval(sendOffer, 2000)
                     } else {
-                        setStatus('Ожидание данных...')
+                        setStatus('Ожидание...')
                     }
                 }
             })
@@ -149,21 +164,27 @@ export function VideoCall({ roomId, userId, isCaller, callType, onEnd }: Props) 
 
     const sendOffer = async () => {
         if (!peerConnection.current) return
-        log('Creating and sending OFFER...')
+        // Если уже есть локальное описание (мы уже создали оффер), просто шлем его снова
+        if (peerConnection.current.localDescription) {
+            channel.current?.send({ type: 'broadcast', event: 'sdp-offer', payload: peerConnection.current.localDescription })
+            return
+        }
+
         try {
             const offer = await peerConnection.current.createOffer()
             await peerConnection.current.setLocalDescription(offer)
             channel.current?.send({ type: 'broadcast', event: 'sdp-offer', payload: offer })
-        } catch (e) { log('Offer error: ' + e) }
+        } catch (e) { log('CreateOffer Err: ' + e) }
     }
 
     const cleanup = () => {
+        if (offerInterval.current) clearInterval(offerInterval.current)
         localStream.current?.getTracks().forEach(t => t.stop())
         peerConnection.current?.close()
         if (channel.current) supabase.removeChannel(channel.current)
     }
 
-    // --- UI Helpers ---
+    // ... (toggleMute, toggleVideo остаются без изменений) ...
     const toggleMute = () => {
         if (localStream.current) {
             localStream.current.getAudioTracks()[0].enabled = !localStream.current.getAudioTracks()[0].enabled
@@ -195,8 +216,8 @@ export function VideoCall({ roomId, userId, isCaller, callType, onEnd }: Props) 
                     </div>
                 )}
 
-                {/* DEBUG LOGS OVERLAY */}
-                <div className="absolute top-4 left-4 font-mono text-[10px] text-green-400 bg-black/80 p-2 rounded max-w-xs pointer-events-none">
+                {/* DEBUG LOGS */}
+                <div className="absolute top-4 left-4 font-mono text-[10px] text-green-400 bg-black/80 p-2 rounded max-w-xs pointer-events-none z-50">
                     <p className="font-bold text-white mb-1">STATUS: {status}</p>
                     {logs.map((l, i) => <div key={i}>{l}</div>)}
                 </div>
@@ -218,12 +239,6 @@ export function VideoCall({ roomId, userId, isCaller, callType, onEnd }: Props) 
                 <button onClick={() => { channel.current?.send({ type: 'broadcast', event: 'end-call', payload: {} }); onEnd() }} className="p-5 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/30 hover:scale-110 transition-all">
                     <PhoneOff size={32} />
                 </button>
-
-                {isCaller && status !== 'Разговор' && (
-                    <button onClick={sendOffer} className="p-4 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/40" title="Повторить отправку вызова">
-                        <RefreshCw />
-                    </button>
-                )}
 
                 <button onClick={toggleVideo} disabled={callType === 'audio'} className={`p-4 rounded-full transition-all ${isVideoOff ? 'bg-white text-black' : 'bg-white/10 text-white'} ${callType === 'audio' ? 'opacity-50' : ''}`}>
                     {isVideoOff ? <VideoOff /> : <Video />}
