@@ -75,7 +75,9 @@ export default function ChatPage() {
 
     const [isInCall, setIsInCall] = useState(false)
     const [isCaller, setIsCaller] = useState(false)
-    const [incomingCall, setIncomingCall] = useState(false)
+    const [callType, setCallType] = useState<'video' | 'audio'>('video') // Тип текущего звонка
+    
+    const ringtoneRef = useRef<HTMLAudioElement | null>(null)
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
@@ -135,6 +137,21 @@ export default function ChatPage() {
     // Генератор ID комнаты
     const getRoomId = (userId1: string, userId2: string) => {
         return [userId1, userId2].sort().join('-')
+    }
+
+    const playRingtone = () => {
+        if (!ringtoneRef.current) {
+            ringtoneRef.current = new Audio('/ringtone.mp3')
+            ringtoneRef.current.loop = true // Зацикливаем
+        }
+        ringtoneRef.current.play().catch(e => console.log('Autoplay blocked', e))
+    }
+
+    const stopRingtone = () => {
+        if (ringtoneRef.current) {
+            ringtoneRef.current.pause()
+            ringtoneRef.current.currentTime = 0
+        }
     }
 
     useEffect(() => {
@@ -206,30 +223,36 @@ export default function ChatPage() {
                 })
                 // 3. !!! НОВОЕ: СЛУШАЕМ ВХОДЯЩИЙ ЗВОНОК !!!
                 .on('broadcast', { event: 'call-start' }, (payload) => {
-                    // Игнорируем свои же сигналы (self: true включен)
                     if (payload.payload.caller_id === user.id) return
 
-                    // Звук звонка (положи ringtone.mp3 в public)
-                    try { new Audio('/ringtone.mp3').play() } catch (e) { }
+                    // Определяем тип звонка из пейлоада
+                    const incomingType = payload.payload.type || 'video'
+                    setCallType(incomingType) 
 
-                    // Показываем уведомление (Toast) с кнопками
-                    toast('Входящий видеозвонок', {
-                        duration: 20000, // Звоним 20 секунд
+                    playRingtone() // <--- ИГРАЕМ МУЗЫКУ
+
+                    toast(`Входящий ${incomingType === 'video' ? 'видео' : 'аудио'}звонок`, {
+                        duration: 20000,
                         position: 'top-center',
-                        icon: '📞',
+                        icon: incomingType === 'video' ? '📹' : '📞',
                         action: {
                             label: 'Ответить',
                             onClick: () => {
-                                setIsCaller(false) // Мы принимаем
-                                setIsInCall(true)  // Открываем окно
+                                stopRingtone() // <--- ОСТАНАВЛИВАЕМ
+                                setIsCaller(false)
+                                setIsInCall(true)
                             }
                         },
                         cancel: {
                             label: 'Отклонить',
                             onClick: () => {
-                                // Можно отправить событие "reject", но пока просто скроем тост
+                                stopRingtone() // <--- ОСТАНАВЛИВАЕМ
+                                // Можно отправить событие 'end-call' в ответ
                             }
                         },
+                        // Если тост исчез сам (таймаут), тоже выключаем звук
+                        onDismiss: () => stopRingtone(), 
+                        onAutoClose: () => stopRingtone()
                     })
                 })
                 .subscribe()
@@ -563,34 +586,45 @@ export default function ChatPage() {
         setIsDragOver(false)
     }
 
-    const startCall = () => {
+    const startCall = (type: 'video' | 'audio') => {
         if (!currentUser || !channelRef.current) return
-
-        // Отправляем сигнал, что мы звоним (передаем caller_id, чтобы не звонить самому себе)
-        channelRef.current.send({
-            type: 'broadcast',
-            event: 'call-start',
-            payload: { caller_id: currentUser.id }
+        
+        setCallType(type) // Запоминаем тип
+        
+        channelRef.current.send({ 
+            type: 'broadcast', 
+            event: 'call-start', 
+            payload: { 
+                caller_id: currentUser.id,
+                type: type // Передаем тип собеседнику
+            } 
         })
-
-        setIsCaller(true) // Мы звоним
-        setIsInCall(true) // Открываем интерфейс
+        
+        setIsCaller(true)
+        setIsInCall(true)
     }
 
     return (
         <div
-            className={`flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border relative ${isDragOver ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''
-                }`}
+            className={`flex flex-col h-screen bg-background text-foreground max-w-xl mx-auto border-x border-border relative transition-colors duration-300 ${
+                isDragOver ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''
+            }`}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
         >
+            {/* --- КОМПОНЕНТ ЗВОНКА (ВИДЕО/АУДИО) --- */}
+            {/* Появляется поверх всего интерфейса, если идет звонок */}
             {isInCall && currentUser && (
-                <VideoCall
+                <VideoCall 
                     roomId={getRoomId(currentUser.id, partnerId as string)}
                     userId={currentUser.id}
                     isCaller={isCaller}
-                    onEnd={() => setIsInCall(false)}
+                    callType={callType} // 'video' или 'audio'
+                    onEnd={() => {
+                        setIsInCall(false)
+                        stopRingtone() // Гарантированно выключаем звук при завершении
+                    }}
                 />
             )}
 
