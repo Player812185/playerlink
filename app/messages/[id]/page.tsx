@@ -619,11 +619,12 @@ export default function ChatPage() {
                 <VideoCall 
                     roomId={getRoomId(currentUser.id, partnerId as string)}
                     userId={currentUser.id}
+                    partnerId={partnerId as string} // <--- ДОБАВЛЕНО
                     isCaller={isCaller}
-                    callType={callType} // 'video' или 'audio'
+                    callType={callType}
                     onEnd={() => {
                         setIsInCall(false)
-                        stopRingtone() // Гарантированно выключаем звук при завершении
+                        stopRingtone()
                     }}
                 />
             )}
