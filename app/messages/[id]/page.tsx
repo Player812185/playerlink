@@ -629,38 +629,39 @@ export default function ChatPage() {
             )}
 
             {/* --- HEADER --- */}
-            <div className="flex items-center gap-4 p-4 border-b border-border bg-card/80 backdrop-blur-md shadow-sm z-10 sticky top-0">
+            <div className="flex items-center gap-4 p-4 border-b border-border bg-card/80 backdrop-blur-md shadow-sm z-10 sticky top-0 transition-all duration-300">
                 {/* Кнопка Назад */}
-                <Link
-                    href="/messages"
-                    className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                <Link 
+                    href="/messages" 
+                    className="text-muted-foreground hover:text-foreground transition-colors p-1 active:scale-95"
                 >
                     <ArrowLeft size={24} />
                 </Link>
 
                 {/* Инфо о собеседнике */}
                 {partnerProfile ? (
-                    <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+                    <Link href={`/u/${partnerProfile.id}`} className="flex items-center gap-3 hover:opacity-80 transition-opacity group">
                         <div className="relative">
-                            <img
-                                src={partnerProfile.avatar_url || '/placeholder.png'}
-                                className="w-10 h-10 rounded-full object-cover border border-border"
-                                alt="Avatar"
+                            <img 
+                                src={partnerProfile.avatar_url || '/placeholder.png'} 
+                                className="w-10 h-10 rounded-full object-cover border border-border group-hover:border-primary/50 transition-colors"
+                                alt={partnerProfile.username}
                             />
                             {/* Индикатор онлайна */}
                             {isPartnerOnline && (
                                 <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full shadow-sm animate-in zoom-in duration-300"></span>
                             )}
                         </div>
-
+                        
                         <div className="flex flex-col">
                             <span className="font-bold leading-none text-foreground text-[15px]">
                                 {partnerProfile.username}
                             </span>
-                            <span className={`text-xs mt-1 transition-colors duration-300 ${isTyping ? 'text-primary font-bold animate-pulse' :
-                                    isPartnerOnline ? 'text-green-500 font-medium' :
-                                        'text-muted-foreground'
-                                }`}>
+                            <span className={`text-xs mt-1 transition-colors duration-300 ${
+                                isTyping ? 'text-primary font-bold animate-pulse' : 
+                                isPartnerOnline ? 'text-green-500 font-medium' : 
+                                'text-muted-foreground'
+                            }`}>
                                 {isTyping ? 'Печатает...' : getLastSeenText()}
                             </span>
                         </div>
@@ -676,17 +677,29 @@ export default function ChatPage() {
                     </div>
                 )}
 
-                {/* Распорка */}
+                {/* Распорка (сдвигает кнопки вправо) */}
                 <div className="flex-grow"></div>
 
-                {/* Кнопка Звонка */}
-                <button
-                    onClick={startCall}
-                    className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-200 active:scale-95"
-                    title="Видеозвонок"
-                >
-                    <Video size={22} />
-                </button>
+                {/* КНОПКИ ЗВОНКОВ */}
+                <div className="flex items-center gap-1">
+                    {/* Аудиозвонок */}
+                    <button 
+                        onClick={() => startCall('audio')}
+                        className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-200 active:scale-95"
+                        title="Аудиозвонок"
+                    >
+                        <Phone size={20} />
+                    </button>
+
+                    {/* Видеозвонок */}
+                    <button 
+                        onClick={() => startCall('video')}
+                        className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-200 active:scale-95"
+                        title="Видеозвонок"
+                    >
+                        <Video size={22} />
+                    </button>
+                </div>
             </div>
 
             {/* --- MESSAGES LIST --- */}
